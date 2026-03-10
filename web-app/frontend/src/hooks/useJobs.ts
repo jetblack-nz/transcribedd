@@ -43,7 +43,7 @@ export function useJobs(userId: string | undefined) {
     episode_url: string
     audio_file_url?: string
   }) => {
-    const { data, error } = await supabase.from('jobs').insert(job).select().single()
+    const { data, error } = await supabase.from('jobs').insert({ ...job, user_id: userId }).select().single()
     if (error) throw error
     return data as Job
   }
