@@ -44,8 +44,11 @@ serve(async (req) => {
       )
     }
 
-    // Security: transcript path must be scoped to the requesting user's folder
-    if (!path.startsWith(user.id + '/')) {
+    // Security: transcript path must be scoped to the requesting user's folder.
+    // Normalize to lowercase since Swift UUID.uuidString is uppercase but auth.uid() is lowercase.
+    const normalizedPath = path.toLowerCase()
+    const normalizedUserId = user.id.toLowerCase()
+    if (!normalizedPath.startsWith(normalizedUserId + '/')) {
       return new Response(
         JSON.stringify({ error: 'Forbidden' }),
         { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
@@ -59,7 +62,7 @@ serve(async (req) => {
     )
     const { data, error } = await adminClient.storage
       .from('transcripts')
-      .createSignedUrl(path, SIGNED_URL_TTL_SECONDS)
+      .createSignedUrl(normalizedPath, SIGNED_URL_TTL_SECONDS)
 
     if (error) throw error
 

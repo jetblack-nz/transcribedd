@@ -37,27 +37,7 @@ private struct ProcessingUpdate: Encodable {
     }
 }
 
-private struct CompletionUpdate: Encodable {
-    let status: String = "completed"
-    let completedAt: String
-    let transcriptPath: String
-    enum CodingKeys: String, CodingKey {
-        case status
-        case completedAt   = "completed_at"
-        case transcriptPath = "transcript_path"
-    }
-}
 
-private struct FailureUpdate: Encodable {
-    let status: String = "failed"
-    let completedAt: String
-    let errorMessage: String
-    enum CodingKeys: String, CodingKey {
-        case status
-        case completedAt  = "completed_at"
-        case errorMessage = "error_message"
-    }
-}
 
 // MARK: - SupabaseService
 
@@ -68,12 +48,6 @@ final class SupabaseService {
     private(set) var client: SupabaseClient?
     private(set) var userId: UUID?
     private(set) var signedInEmail: String?
-
-    private static let iso8601: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return f
-    }()
 
     private init() {}
 
@@ -137,26 +111,32 @@ final class SupabaseService {
 
     func completeJob(id: UUID, transcriptPath: String) async throws {
         guard let client else { throw WorkerError.notConfigured }
-        try await client
-            .from("jobs")
-            .update(CompletionUpdate(
-                completedAt: Self.iso8601.string(from: Date()),
-                transcriptPath: transcriptPath
+        struct Params: Encodable {
+            let p_job_id: String
+            let p_transcript_path: String
+        }
+        let _: [Job] = try await client
+            .rpc("complete_job", params: Params(
+                p_job_id: id.uuidString.lowercased(),
+                p_transcript_path: transcriptPath
             ))
-            .eq("id", value: id.uuidString)
             .execute()
+            .value
     }
 
     func failJob(id: UUID, error: String) async throws {
         guard let client else { throw WorkerError.notConfigured }
-        try await client
-            .from("jobs")
-            .update(FailureUpdate(
-                completedAt: Self.iso8601.string(from: Date()),
-                errorMessage: error
+        struct Params: Encodable {
+            let p_job_id: String
+            let p_error_message: String
+        }
+        let _: [Job] = try await client
+            .rpc("fail_job", params: Params(
+                p_job_id: id.uuidString.lowercased(),
+                p_error_message: error
             ))
-            .eq("id", value: id.uuidString)
             .execute()
+            .value
     }
 
     // MARK: Storage
@@ -167,7 +147,8 @@ final class SupabaseService {
         guard let data = content.data(using: .utf8) else {
             throw WorkerError.uploadFailed("Failed to encode transcript as UTF-8")
         }
-        let path = "\(userId.uuidString)/\(jobId.uuidString).txt"
+        // Postgres auth.uid()::text is lowercase — path folder must match exactly.
+        let path = "\(userId.uuidString.lowercased())/\(jobId.uuidString.lowercased()).txt"
         try await client.storage
             .from("transcripts")
             .upload(path, data: data, options: FileOptions(contentType: "text/plain"))

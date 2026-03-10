@@ -22,5 +22,9 @@ let package = Package(
                 .unsafeFlags(["-strict-concurrency=complete"])
             ]
         ),
+        .executableTarget(
+            name: "WorkerTests",
+            path: "Tests/WorkerTests"
+        ),
     ]
 )
