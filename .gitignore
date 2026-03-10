@@ -1,0 +1,101 @@
+# Dependencies
+node_modules/
+venv/
+__pycache__/
+*.pyc
+.Python
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+.next/
+out/
+
+# Environment variables
+.env
+.env.local
+.env.production
+.env.development
+*.env
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+.nyc_output/
+.pytest_cache/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Xcode
+*.xcuserstate
+*.xcworkspace
+!default.xcworkspace
+xcuserdata/
+DerivedData/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+.cache/
+
+# Audio and transcript temp files
+*.mp3
+*.wav
+*.m4a
+transcripts-temp/
+audio-temp/
+
+# Whisper models cache
+~/.cache/whisper/
+
+# Secrets and keys
+*.pem
+*.key
+*.cert
+*.p12
+secrets/
+
+# Azure
+.azure/
+
+# Terraform
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Package manager
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
