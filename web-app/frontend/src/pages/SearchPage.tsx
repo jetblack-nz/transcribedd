@@ -65,7 +65,13 @@ export function SearchPage() {
 
       if (feeds.length === 0) setSearchError('No podcasts found. Try a different search.')
     } catch (err: unknown) {
-      setSearchError(err instanceof Error ? err.message : 'Search failed')
+      if (err && typeof err === 'object' && 'context' in err) {
+        const ctx = (err as { context: Response }).context
+        const body = await ctx.text().catch(() => '')
+        setSearchError(`HTTP ${ctx.status}: ${body || (err instanceof Error ? err.message : 'Search failed')}`)
+      } else {
+        setSearchError(err instanceof Error ? err.message : 'Search failed')
+      }
     } finally {
       setLoading(false)
     }
