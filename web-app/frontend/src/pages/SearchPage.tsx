@@ -98,7 +98,7 @@ export function SearchPage() {
           duration: Number(ep.duration ?? 0),
           enclosureUrl: String(ep.enclosureUrl ?? ''),
           feedTitle: podcast.title,
-        }))
+        })).sort((a, b) => b.datePublished - a.datePublished)
       )
     } catch (err: unknown) {
       setSearchError(err instanceof Error ? err.message : 'Failed to load episodes')

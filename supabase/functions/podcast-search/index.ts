@@ -1,36 +1,10 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 
-const PODCAST_INDEX_KEY = Deno.env.get('PODCAST_INDEX_KEY') ?? ''
-const PODCAST_INDEX_SECRET = Deno.env.get('PODCAST_INDEX_SECRET') ?? ''
-const BASE_URL = 'https://api.podcastindex.org/api/1.0'
+const ITUNES_BASE = 'https://itunes.apple.com'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
-
-async function buildAuthHeaders(): Promise<Record<string, string>> {
-  const apiHeaderTime = Math.floor(Date.now() / 1000).toString()
-  const message = PODCAST_INDEX_KEY + PODCAST_INDEX_SECRET + apiHeaderTime
-
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(PODCAST_INDEX_SECRET),
-    { name: 'HMAC', hash: 'SHA-1' },
-    false,
-    ['sign'],
-  )
-  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message))
-  const hash = Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-
-  return {
-    'User-Agent': 'transcribedd/1.0',
-    'X-Auth-Key': PODCAST_INDEX_KEY,
-    'X-Auth-Date': apiHeaderTime,
-    Authorization: hash,
-  }
 }
 
 serve(async (req) => {
@@ -39,20 +13,14 @@ serve(async (req) => {
   }
 
   try {
-    if (!PODCAST_INDEX_KEY || !PODCAST_INDEX_SECRET) {
-      return new Response(
-        JSON.stringify({ error: 'PODCAST_INDEX_KEY and PODCAST_INDEX_SECRET secrets are not set' }),
-        { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
-      )
-    }
-
     const { q, feedId } = await req.json()
 
     let apiUrl: string
     if (feedId) {
-      apiUrl = `${BASE_URL}/episodes/byfeedid?id=${encodeURIComponent(feedId)}&max=30&pretty`
+      // Episodes lookup by iTunes collection ID
+      apiUrl = `${ITUNES_BASE}/lookup?id=${encodeURIComponent(feedId)}&media=podcast&entity=podcastEpisode&limit=50`
     } else if (q) {
-      apiUrl = `${BASE_URL}/search/byterm?q=${encodeURIComponent(q)}&max=20&pretty`
+      apiUrl = `${ITUNES_BASE}/search?term=${encodeURIComponent(q)}&media=podcast&entity=podcast&limit=20`
     } else {
       return new Response(
         JSON.stringify({ error: 'q or feedId is required' }),
@@ -60,9 +28,41 @@ serve(async (req) => {
       )
     }
 
-    const headers = await buildAuthHeaders()
-    const response = await fetch(apiUrl, { headers })
-    const data = await response.json()
+    const response = await fetch(apiUrl, { headers: { 'User-Agent': 'transcribedd/1.0' } })
+    const raw = await response.json()
+
+    let data: unknown
+    if (feedId) {
+      // First result is the podcast itself; rest are episodes
+      const episodes = (raw.results ?? []).filter(
+        (r: Record<string, unknown>) => r.wrapperType === 'podcastEpisode',
+      )
+      data = {
+        items: episodes.map((ep: Record<string, unknown>) => ({
+          id: ep.trackId,
+          title: ep.trackName,
+          description: ep.description ?? null,
+          datePublished: ep.releaseDate
+            ? Math.floor(new Date(ep.releaseDate as string).getTime() / 1000)
+            : 0,
+          duration: ep.trackTimeMillis ? Math.floor(Number(ep.trackTimeMillis) / 1000) : 0,
+          enclosureUrl: ep.episodeUrl ?? '',
+        })),
+      }
+    } else {
+      data = {
+        feeds: (raw.results ?? []).map((f: Record<string, unknown>) => ({
+          id: f.collectionId,
+          title: f.collectionName,
+          author: f.artistName ?? '',
+          artwork: f.artworkUrl600 ?? f.artworkUrl100 ?? null,
+          image: f.artworkUrl600 ?? f.artworkUrl100 ?? null,
+          url: f.feedUrl ?? '',
+          ownerName: f.artistName ?? '',
+          description: null,
+        })),
+      }
+    }
 
     return new Response(JSON.stringify(data), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
@@ -75,3 +75,4 @@ serve(async (req) => {
     )
   }
 })
+
