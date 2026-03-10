@@ -1,247 +1,135 @@
 # macOS Desktop Application
 
-The Transcribedd Worker - a native macOS application that processes transcription jobs using local Whisper AI.
+The Transcribedd Worker — a native macOS menu-bar app that processes transcription jobs using local Whisper AI.
 
 ## Overview
 
-This is a macOS desktop app (menu bar app) that:
-- Polls the API for pending transcription jobs
-- Downloads podcast audio files
-- Runs Whisper AI locally for transcription
-- Uploads completed transcripts back to Azure
-- Provides status notifications and progress updates
+- Polls Supabase for pending transcription jobs (10-second interval)
+- Atomically claims a job via `claim_next_job` SQL RPC
+- Downloads the podcast audio file
+- Runs **whisper.cpp** (`whisper-cli`) locally for transcription
+- Uploads the completed transcript to Supabase Storage
+- Updates job status in real time
 
-## Tech Stack Decision
+## Tech Stack
 
-**Option A: Native Swift + SwiftUI** (Recommended)
-- Best performance and native macOS integration
-- Smaller app size (~10-20MB)
-- Better battery efficiency
-- System tray/menu bar integration
-- Native notifications
-- Requires: Xcode, macOS development experience
+| Concern | Choice |
+|---|---|
+| Framework | Swift + SwiftUI (native macOS, menu-bar app) |
+| Backend | Supabase (Auth, Database, Storage) |
+| Transcription | whisper.cpp via Homebrew (`whisper-cli`) |
+| Min OS | macOS 14 Sonoma |
 
-**Option B: Electron + React**
-- Cross-platform potential (Windows/Linux later)
-- Reuse web frontend code
-- JavaScript/TypeScript consistency
-- Larger app size (~150MB+)
-- Higher memory usage
-- Requires: Node.js, Electron knowledge
+**Decision history:** [docs/plan/DECISIONS.md](../docs/plan/DECISIONS.md)
 
-**Decision:** See [docs/plan/DECISIONS.md](../docs/plan/DECISIONS.md)
+## Project Structure
 
-## Structure
-
-### Swift/SwiftUI (if chosen)
 ```
 mac-app/
-├── TranscribeddWorker/
-│   ├── Models/
-│   │   ├── Job.swift
-│   │   ├── Settings.swift
-│   │   └── TranscriptResult.swift
-│   ├── Services/
-│   │   ├── APIService.swift
-│   │   ├── DownloadManager.swift
-│   │   ├── WhisperService.swift
-│   │   └── UploadManager.swift
-│   ├── Views/
-│   │   ├── MenuBarView.swift
-│   │   ├── PreferencesView.swift
-│   │   └── ProgressView.swift
-│   ├── Utils/
-│   └── App.swift
-└── TranscribeddWorker.xcodeproj
-```
-
-### Electron (if chosen)
-```
-mac-app/
-├── src/
-│   ├── main/          # Electron main process
-│   ├── renderer/      # React UI
-│   ├── services/      # Background services
-│   └── preload/
-├── package.json
-└── electron-builder.json
+└── TranscribeddWorker/
+    ├── App.swift                        # @main entry, MenuBarExtra + Settings scenes
+    ├── AppState.swift                   # ObservableObject — drives UI, owns polling loop
+    ├── Models/
+    │   └── Job.swift                    # Codable Job struct + JobStatus enum
+    ├── Settings/
+    │   └── AppSettings.swift            # UserDefaults + Keychain-backed settings
+    ├── Services/
+    │   ├── SupabaseService.swift        # Auth, DB (claim/complete/fail), Storage upload
+    │   ├── TranscriptionService.swift   # Runs whisper-cli subprocess
+    │   └── DownloadManager.swift        # Downloads audio to temp directory
+    ├── Views/
+    │   ├── MenuBarView.swift            # Menu popover — status, current job, recent jobs
+    │   └── PreferencesView.swift        # Settings tabs (Supabase / Whisper)
+    ├── Utils/
+    │   └── KeychainHelper.swift         # SecItem wrapper for storing password
+    └── Resources/
+        └── TranscribeddWorker.entitlements
 ```
 
 ## Whisper Integration
 
-### Option A: Python Whisper
-```bash
-# Install
-pip install openai-whisper
+whisper.cpp is installed via Homebrew:
 
-# Usage in app
-python3 -m whisper audio.mp3 --model medium --output_format all
+```bash
+brew install whisper-cpp
+# Installed binaries: whisper-cli, whisper-cpp, whisper-server, …
 ```
 
-### Option B: whisper.cpp (Recommended for production)
+The app calls `whisper-cli` as a subprocess:
+
 ```bash
-# Build whisper.cpp
-git clone https://github.com/ggerganov/whisper.cpp
-cd whisper.cpp
-make
-
-# Download models
-bash ./models/download-ggml-model.sh medium
-
-# Usage
-./main -m models/ggml-medium.bin -f audio.wav
+whisper-cli -m ~/.cache/whisper/ggml-small.bin \
+            -otxt \
+            --output-file /tmp/audio \
+            -t 8 \
+            /tmp/audio.mp3
+# → writes /tmp/audio.txt
 ```
 
-**whisper.cpp advantages:**
-- 2-4x faster on M-series Macs
-- Lower memory usage
-- No Python runtime needed
-- Better battery life
+Models are downloaded once and cached in `~/.cache/whisper/`. The Preferences window
+has a **Download small model** button that fetches `ggml-small.bin` from HuggingFace.
 
-## Features
+| Model | Size | Speed (M3) | Accuracy |
+|-------|------|------------|----------|
+| tiny  | 75 MB | ~30s/hr audio | Basic |
+| base  | 142 MB | ~60s/hr audio | Good |
+| **small** | **466 MB** | **~2min/hr audio** | **Recommended** |
+| medium | 1.5 GB | ~5min/hr audio | High |
 
-### Core Functionality
-- [x] Job polling (every 30 seconds)
-- [x] Audio file download with progress
-- [x] Whisper transcription
-- [x] Multiple format output (TXT, SRT, VTT, JSON)
-- [x] Result upload to Azure
-- [x] Error handling and retry logic
-
-### User Interface
-- [x] Menu bar icon with status
-- [x] Preferences/Settings window
-- [x] Active job progress display
-- [x] Notification on completion
-- [x] Job history viewer
-
-### Settings
-- API endpoint URL
-- User API key
-- Polling interval
-- Whisper model selection (tiny/base/small/medium/large)
-- Auto-start on login
-- Notification preferences
-- Storage location for temp files
-
-## Development Setup
+## Xcode Setup (one-time)
 
 ### Prerequisites
-- macOS 12.0+
-- Xcode 14+ (for Swift)
-  OR
-- Node.js 18+ (for Electron)
-- Python 3.8+ (for Whisper)
-- Azure account credentials
 
-### Swift Development
-```bash
-# Open in Xcode
-open TranscribeddWorker.xcodeproj
+- macOS 14 Sonoma or later
+- Xcode 15+
+- whisper.cpp: `brew install whisper-cpp`
 
-# Install dependencies (if using Swift Package Manager)
-# Dependencies managed in Xcode
+### 1. Create the Xcode project
 
-# Run
-# Press Cmd+R in Xcode
-```
+1. Open Xcode → **File › New › Project…**
+2. Choose **macOS › App**
+3. Fill in:
+   - Product Name: `TranscribeddWorker`
+   - Bundle Identifier: `com.yourname.TranscribeddWorker`
+   - Interface: **SwiftUI**
+   - Language: **Swift**
+4. Save into `mac-app/`
+5. Delete the generated `ContentView.swift`
 
-### Electron Development
-```bash
-cd mac-app
-npm install
-npm run dev
-```
+### 2. Add source files
 
-### Install Whisper
-```bash
-# Python version
-pip install openai-whisper
+Drag all files from `mac-app/TranscribeddWorker/` into the Xcode project (check **Copy items if needed** = OFF, **Add to target** = TranscribeddWorker).
 
-# OR whisper.cpp
-git clone https://github.com/ggerganov/whisper.cpp
-cd whisper.cpp && make
-```
+### 3. Add Supabase Swift SDK
 
-## Configuration
+**File › Add Package Dependencies…**  
+URL: `https://github.com/supabase-community/supabase-swift`  
+Version: `2.0.0` or later  
+Select product: **Supabase**
 
-Create `settings.json` in app's Application Support folder:
-```json
-{
-  "apiEndpoint": "https://transcribedd-api.azurewebsites.net",
-  "apiKey": "your-api-key",
-  "pollingInterval": 30,
-  "whisperModel": "medium",
-  "autoStart": true,
-  "notificationsEnabled": true,
-  "tempDirectory": "~/Library/Application Support/Transcribedd/temp"
-}
-```
+### 4. Configure the target
 
-## Building & Distribution
+| Setting | Value |
+|---------|-------|
+| Deployment Target | macOS 13.0 |
+| Signing & Capabilities → Entitlements File | `TranscribeddWorker/Resources/TranscribeddWorker.entitlements` |
+| Info.plist → `LSUIElement` | `YES` (hides Dock icon — menu-bar only) |
+| Info.plist → `NSAppTransportSecurity` | not needed (HTTPS only) |
 
-### Code Signing (Required for macOS)
-1. Join Apple Developer Program ($99/year)
-2. Create Developer ID certificate
-3. Sign the app
+### 5. Run
 
-### Notarization (Required for macOS)
-```bash
-# Submit for notarization
-xcrun notarytool submit TranscribeddWorker.zip \
-  --apple-id "your@email.com" \
-  --password "app-specific-password" \
-  --team-id "TEAM_ID"
-```
+Press **⌘R**. A waveform icon appears in the menu bar.  
+Open **Settings** and enter your Supabase credentials + whisper model path.  
+Click **Test Connection**, then **Start**.
 
-### Distribution Options
-1. **Direct Download** - DMG file from website
-2. **Homebrew Cask** - `brew install transcribedd-worker`
-3. **Mac App Store** - Full review process required
+## Security Notes
 
-## Auto-Updates
-
-**For native Swift:**
-- Use Sparkle framework
-- Host appcast.xml on Azure
-
-**For Electron:**
-- Use electron-updater
-- Uses GitHub releases or custom server
-
-## Testing
-
-### Unit Tests
-```bash
-# Swift: Cmd+U in Xcode
-# Electron: npm test
-```
-
-### Integration Tests
-- Test API connection
-- Test Whisper integration
-- Test full job workflow
-- Test error scenarios
-
-## Performance Targets
-
-- Job polling: <500ms response time
-- Audio download: Full bandwidth utilization
-- Transcription: ~5 minutes for 1-hour podcast (medium model)
-- Upload: <30 seconds for typical transcript
-- Memory usage: <200MB idle, <2GB during transcription
-
-## Troubleshooting
-
-Common issues and solutions coming soon.
-
-## Security
-
-- API keys stored in macOS Keychain
-- HTTPS for all API calls
-- Temporary files deleted after upload
-- No audio/transcript data persisted locally (optional setting)
+- Password is stored in the macOS Keychain (never UserDefaults)
+- No app sandbox — required to launch `whisper-cli` from `/opt/homebrew/bin`
+- Downloaded audio is written to `tmp/` and deleted immediately after transcription
+- Transcripts are uploaded to a private Supabase Storage bucket scoped to the user's UUID
 
 ## Contributing
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for development guidelines.
+

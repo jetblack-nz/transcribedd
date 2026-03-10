@@ -1,0 +1,51 @@
+name: TranscribeddWorker
+options:
+  bundleIdPrefix: com.transcribedd
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "15.0"
+  generateEmptyDirectories: true
+  defaultConfig: Debug
+
+packages:
+  Supabase:
+    url: https://github.com/supabase-community/supabase-swift
+    minorVersion: "2.0.0"
+
+targets:
+  TranscribeddWorker:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: TranscribeddWorker
+        excludes:
+          - Resources/Info.plist  # managed below via info:
+    info:
+      path: TranscribeddWorker/Resources/Info.plist
+    entitlements:
+      path: TranscribeddWorker/Resources/TranscribeddWorker.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.transcribedd.worker
+        SWIFT_VERSION: "5.10"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
+    dependencies:
+      - package: Supabase
+        product: Supabase
+
+schemes:
+  TranscribeddWorker:
+    build:
+      targets:
+        TranscribeddWorker: all
+    run:
+      config: Debug
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

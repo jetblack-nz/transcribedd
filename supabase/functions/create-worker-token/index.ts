@@ -79,10 +79,9 @@ serve(async (req) => {
       JSON.stringify({ token: rawToken }),
       { headers: { 'Content-Type': 'application/json', ...corsHeaders } },
     )
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Internal error'
+  } catch {
     return new Response(
-      JSON.stringify({ error: message }),
+      JSON.stringify({ error: 'Internal server error' }),
       { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
     )
   }
