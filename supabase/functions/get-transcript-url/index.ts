@@ -70,9 +70,10 @@ serve(async (req) => {
       JSON.stringify({ url: data.signedUrl }),
       { headers: { 'Content-Type': 'application/json', ...corsHeaders } },
     )
-  } catch {
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err)
     return new Response(
-      JSON.stringify({ error: 'Internal server error' }),
+      JSON.stringify({ error: message }),
       { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
     )
   }

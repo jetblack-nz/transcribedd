@@ -19,10 +19,24 @@ export function DashboardPage() {
       const { data, error } = await supabase.functions.invoke('get-transcript-url', {
         body: { path: job.transcript_path },
       })
-      if (error) throw error
-      if (data?.url) window.open(data.url, '_blank')
-    } catch {
-      alert('Could not generate download link. Please try again.')
+      // Supabase wraps HTTP errors as FunctionsHttpError; extract the body for the real message
+      if (error) {
+        let detail = error.message
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const body = await (error as any).context?.json?.()
+          if (body?.error) detail = body.error
+        } catch { /* ignore */ }
+        throw new Error(detail)
+      }
+      if (data?.url) {
+        window.open(data.url, '_blank')
+      } else {
+        throw new Error('No URL returned from server')
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      alert(`Download failed: ${msg}`)
     }
   }
 
