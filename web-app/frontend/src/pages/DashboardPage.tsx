@@ -17,7 +17,7 @@ export function DashboardPage() {
     if (!job.transcript_path) return
     try {
       const { data, error } = await supabase.functions.invoke('get-transcript-url', {
-        body: { path: job.transcript_path },
+        body: { jobId: job.id },
       })
       // Supabase wraps HTTP errors as FunctionsHttpError; extract the body for the real message
       if (error) {
