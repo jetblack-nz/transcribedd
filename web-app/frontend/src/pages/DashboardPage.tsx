@@ -33,7 +33,15 @@ export function DashboardPage() {
       const body = await resp.json()
       if (!resp.ok) throw new Error(body.error ?? `HTTP ${resp.status}`)
       if (body.url) {
-        window.open(body.url, '_blank')
+        // Fetch the file and trigger a real download (window.open would just open it in a tab)
+        const fileResp = await fetch(body.url)
+        const blob = await fileResp.blob()
+        const blobUrl = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = blobUrl
+        a.download = `${job.episode_title ?? job.id}.txt`
+        a.click()
+        URL.revokeObjectURL(blobUrl)
       } else {
         throw new Error('No URL returned from server')
       }
