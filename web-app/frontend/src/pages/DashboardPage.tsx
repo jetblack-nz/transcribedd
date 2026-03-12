@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useJobs } from '../hooks/useJobs'
@@ -12,6 +12,39 @@ export function DashboardPage() {
   const [workerToken, setWorkerToken] = useState<string | null>(null)
   const [generatingToken, setGeneratingToken] = useState(false)
   const [tokenError, setTokenError] = useState<string | null>(null)
+
+  const [prompt, setPrompt] = useState('')
+  const [promptLoading, setPromptLoading] = useState(true)
+  const [promptSaving, setPromptSaving] = useState(false)
+  const [promptSaved, setPromptSaved] = useState(false)
+
+  useEffect(() => {
+    if (!user) return
+    supabase.from('profiles').select('processing_prompt').eq('id', user.id).single()
+      .then(({ data }) => {
+        setPrompt(data?.processing_prompt ?? '')
+        setPromptLoading(false)
+      })
+  }, [user])
+
+  const handleSavePrompt = async () => {
+    if (!user) return
+    setPromptSaving(true)
+    await supabase.from('profiles').update({ processing_prompt: prompt }).eq('id', user.id)
+    setPromptSaving(false)
+    setPromptSaved(true)
+    setTimeout(() => setPromptSaved(false), 2000)
+  }
+
+  const triggerDownload = (content: string, filename: string) => {
+    const blob = new Blob([content], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }
 
   const handleDownload = async (job: Job) => {
     if (!job.transcript_path) return
@@ -33,21 +66,45 @@ export function DashboardPage() {
       const body = await resp.json()
       if (!resp.ok) throw new Error(body.error ?? `HTTP ${resp.status}`)
       if (body.url) {
-        // Fetch the file and trigger a real download (window.open would just open it in a tab)
         const fileResp = await fetch(body.url)
-        const blob = await fileResp.blob()
-        const blobUrl = URL.createObjectURL(blob)
-        const a = document.createElement('a')
-        a.href = blobUrl
-        a.download = `${job.episode_title ?? job.id}.txt`
-        a.click()
-        URL.revokeObjectURL(blobUrl)
+        const text = await fileResp.text()
+        triggerDownload(text, `${job.episode_title ?? job.id}.txt`)
       } else {
         throw new Error('No URL returned from server')
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       alert(`Download failed: ${msg}`)
+    }
+  }
+
+  const handleDownloadDeluxe = async (job: Job) => {
+    if (!job.transcript_path) return
+    if (!prompt.trim()) {
+      alert('Set a processing prompt in the settings below first.')
+      return
+    }
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Not authenticated')
+
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/process-transcript`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ jobId: job.id }),
+        },
+      )
+      const body = await resp.json()
+      if (!resp.ok) throw new Error(body.error ?? `HTTP ${resp.status}`)
+      triggerDownload(body.text, `${job.episode_title ?? job.id} (deluxe).txt`)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      alert(`Deluxe download failed: ${msg}`)
     }
   }
 
@@ -116,10 +173,37 @@ export function DashboardPage() {
       ) : (
         <div className="space-y-3">
           {jobs.map((job) => (
-            <JobCard key={job.id} job={job} onDownload={handleDownload} />
+            <JobCard key={job.id} job={job} onDownload={handleDownload} onDownloadDeluxe={handleDownloadDeluxe} hasPrompt={!!prompt.trim()} />
           ))}
         </div>
       )}
+
+      {/* Processing prompt section */}
+      <div className="border-t border-gray-200 pt-8">
+        <h2 className="text-base font-semibold text-gray-900 mb-1">Deluxe processing prompt</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          When you click <strong>Download Deluxe</strong>, your transcript is sent to an AI with this prompt.
+          Example: <em>"Summarise this podcast transcript in bullet points."</em>
+        </p>
+        {!promptLoading && (
+          <div className="space-y-2">
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              rows={4}
+              placeholder="Enter your processing prompt…"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-gray-900 resize-y"
+            />
+            <button
+              onClick={handleSavePrompt}
+              disabled={promptSaving}
+              className="bg-gray-900 text-white text-sm px-4 py-2 rounded-lg hover:bg-gray-700 transition-colors disabled:opacity-50"
+            >
+              {promptSaving ? 'Saving…' : promptSaved ? 'Saved ✓' : 'Save prompt'}
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* Worker Token section */}
       <div className="border-t border-gray-200 pt-8">

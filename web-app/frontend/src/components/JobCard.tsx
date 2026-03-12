@@ -10,9 +10,11 @@ const STATUS_CLASSES: Record<string, string> = {
 interface JobCardProps {
   job: Job
   onDownload: (job: Job) => void
+  onDownloadDeluxe: (job: Job) => void
+  hasPrompt: boolean
 }
 
-export function JobCard({ job, onDownload }: JobCardProps) {
+export function JobCard({ job, onDownload, onDownloadDeluxe, hasPrompt }: JobCardProps) {
   const date = new Date(job.created_at).toLocaleDateString(undefined, {
     year: 'numeric', month: 'short', day: 'numeric',
   })
@@ -30,12 +32,21 @@ export function JobCard({ job, onDownload }: JobCardProps) {
             {job.status}
           </span>
           {job.status === 'completed' && (
-            <button
-              onClick={() => onDownload(job)}
-              className="text-xs bg-gray-900 text-white px-3 py-1.5 rounded-md hover:bg-gray-700 transition-colors"
-            >
-              Download
-            </button>
+            <>
+              <button
+                onClick={() => onDownload(job)}
+                className="text-xs bg-gray-900 text-white px-3 py-1.5 rounded-md hover:bg-gray-700 transition-colors"
+              >
+                Download
+              </button>
+              <button
+                onClick={() => onDownloadDeluxe(job)}
+                title={hasPrompt ? 'Process with your AI prompt' : 'Set a processing prompt in settings first'}
+                className="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500 transition-colors disabled:opacity-40"
+              >
+                ✨ Deluxe
+              </button>
+            </>
           )}
         </div>
       </div>
