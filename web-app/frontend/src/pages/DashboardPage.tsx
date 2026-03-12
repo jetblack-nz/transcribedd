@@ -16,21 +16,24 @@ export function DashboardPage() {
   const handleDownload = async (job: Job) => {
     if (!job.transcript_path) return
     try {
-      const { data, error } = await supabase.functions.invoke('get-transcript-url', {
-        body: { jobId: job.id },
-      })
-      // Supabase wraps HTTP errors as FunctionsHttpError; extract the body for the real message
-      if (error) {
-        let detail = error.message
-        try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const body = await (error as any).context?.json?.()
-          if (body?.error) detail = body.error
-        } catch { /* ignore */ }
-        throw new Error(detail)
-      }
-      if (data?.url) {
-        window.open(data.url, '_blank')
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) throw new Error('Not authenticated')
+
+      const resp = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-transcript-url`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ jobId: job.id }),
+        },
+      )
+      const body = await resp.json()
+      if (!resp.ok) throw new Error(body.error ?? `HTTP ${resp.status}`)
+      if (body.url) {
+        window.open(body.url, '_blank')
       } else {
         throw new Error('No URL returned from server')
       }
