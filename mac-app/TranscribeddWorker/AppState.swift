@@ -119,9 +119,18 @@ final class AppState: ObservableObject {
                         }
                         group.addTask { [weak self] in
                             guard let self else { return }
-                            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-                                Task { @MainActor in
-                                    self.jobAvailableContinuation = cont
+                            await withTaskCancellationHandler {
+                                await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                                    Task { @MainActor in
+                                        self.jobAvailableContinuation = cont
+                                    }
+                                }
+                            } onCancel: {
+                                // Resume the continuation so withCheckedContinuation unblocks
+                                // and this task can finish, allowing withTaskGroup to return.
+                                Task { @MainActor [weak self] in
+                                    self?.jobAvailableContinuation?.resume()
+                                    self?.jobAvailableContinuation = nil
                                 }
                             }
                         }

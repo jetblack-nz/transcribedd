@@ -24,20 +24,24 @@ enum WorkerError: LocalizedError {
     }
 }
 
-// MARK: - Encodable update payloads
-
-private struct ProcessingUpdate: Encodable {
-    let status: String = "processing"
-    let startedAt: String
-    let workerId: String
-    enum CodingKeys: String, CodingKey {
-        case status
-        case startedAt = "started_at"
-        case workerId  = "worker_id"
+// MARK: - UserDefaults-backed auth storage
+//
+// The default KeychainLocalStorage prompts for the keychain password on every
+// access (session restore, token refresh, each API call).  Storing the short-
+// lived session JWT in UserDefaults avoids those prompts entirely — the token
+// is already scoped to the macOS user account and refreshed automatically.
+private final class UserDefaultsAuthStorage: AuthLocalStorage {
+    private let key = "supabase.session"
+    func store(key: String, value: Data) throws {
+        UserDefaults.standard.set(value, forKey: key)
+    }
+    func retrieve(key: String) throws -> Data? {
+        UserDefaults.standard.data(forKey: key)
+    }
+    func remove(key: String) throws {
+        UserDefaults.standard.removeObject(forKey: key)
     }
 }
-
-
 
 // MARK: - SupabaseService
 
@@ -59,7 +63,15 @@ final class SupabaseService {
         guard let url = URL(string: s.supabaseURL), !s.supabaseAnonKey.isEmpty else {
             throw WorkerError.missingConfiguration
         }
-        client = SupabaseClient(supabaseURL: url, supabaseKey: s.supabaseAnonKey)
+        client = SupabaseClient(
+            supabaseURL: url,
+            supabaseKey: s.supabaseAnonKey,
+            options: SupabaseClientOptions(
+                auth: SupabaseClientOptions.AuthOptions(
+                    storage: UserDefaultsAuthStorage()
+                )
+            )
+        )
     }
 
     /// Restore an existing persisted session (no browser needed).
