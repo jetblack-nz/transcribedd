@@ -7,6 +7,15 @@ export function AuthCallbackPage() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    // Supabase may redirect here with ?error=... if auth fails upstream
+    // (e.g. signups disabled, access denied). Surface that before calling getSession.
+    const params = new URLSearchParams(window.location.search)
+    const urlError = params.get('error_description') ?? params.get('error')
+    if (urlError) {
+      setError(decodeURIComponent(urlError.replace(/\+/g, ' ')))
+      return
+    }
+
     supabase.auth.getSession().then(({ data: { session }, error }) => {
       if (error) {
         console.error('[AuthCallback] exchange error:', error.message)

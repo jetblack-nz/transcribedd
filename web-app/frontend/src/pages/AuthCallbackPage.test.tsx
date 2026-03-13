@@ -70,4 +70,21 @@ describe('AuthCallbackPage', () => {
     })
     expect(mockNavigate).not.toHaveBeenCalled()
   })
+
+  it('shows URL error when Supabase redirects with ?error_description=', async () => {
+    // Simulate Supabase appending error params to the callback URL
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, search: '?error=access_denied&error_code=signup_disabled&error_description=Signups+not+allowed+for+this+instance' },
+      writable: true,
+    })
+    render(<AuthCallbackPage />)
+    await waitFor(() => {
+      expect(screen.getByText('Sign-in failed')).toBeInTheDocument()
+      expect(screen.getByText('Signups not allowed for this instance')).toBeInTheDocument()
+    })
+    expect(mockGetSession).not.toHaveBeenCalled()
+    expect(mockNavigate).not.toHaveBeenCalled()
+    // restore
+    Object.defineProperty(window, 'location', { value: { ...window.location, search: '' }, writable: true })
+  })
 })
