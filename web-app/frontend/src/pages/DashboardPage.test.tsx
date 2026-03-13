@@ -30,9 +30,9 @@ vi.mock('../lib/supabase', () => ({
 }))
 
 function mockAuthSession(user: any) {
-  mockGetSession.mockResolvedValue({
-    data: { session: user ? { user } : null },
-    error: null,
+  mockAuthStateChange.mockImplementation((callback: (event: string, session: any) => void) => {
+    callback('INITIAL_SESSION', user ? { user } : null)
+    return { data: { subscription: { unsubscribe: vi.fn() } } }
   })
 }
 
