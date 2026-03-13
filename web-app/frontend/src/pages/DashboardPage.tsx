@@ -33,10 +33,6 @@ async function buildDocx(text: string): Promise<Blob> {
 export function DashboardPage() {
   const { user } = useAuth()
   const { jobs, loading, error } = useJobs(user?.id)
-  const [workerToken, setWorkerToken] = useState<string | null>(null)
-  const [generatingToken, setGeneratingToken] = useState(false)
-  const [tokenError, setTokenError] = useState<string | null>(null)
-
   const DEFAULT_PROMPT = `You are a transcript formatter. Your job is to take a raw podcast transcript and format it cleanly — do NOT change, remove, summarise, or paraphrase any of the spoken content.
 
 Apply the following formatting rules:
@@ -140,28 +136,13 @@ Apply the following formatting rules:
       const url = URL.createObjectURL(docxBlob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${job.episode_title ?? job.id} (deluxe).docx`
+      a.download = `${job.episode_title ?? job.id}.docx`
       a.click()
       URL.revokeObjectURL(url)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
-      alert(`Deluxe download failed: ${msg}`)
+      alert(`Download (docx) failed: ${msg}`)
       throw err
-    }
-  }
-
-  const handleGenerateWorkerToken = async () => {
-    setGeneratingToken(true)
-    setTokenError(null)
-    setWorkerToken(null)
-    try {
-      const { data, error } = await supabase.functions.invoke('create-worker-token', {})
-      if (error) throw error
-      setWorkerToken(data.token)
-    } catch (err: unknown) {
-      setTokenError(err instanceof Error ? err.message : (err as any)?.message ?? 'Failed to generate token')
-    } finally {
-      setGeneratingToken(false)
     }
   }
 
@@ -222,9 +203,9 @@ Apply the following formatting rules:
 
       {/* Processing prompt section */}
       <div className="border-t border-gray-200 pt-8">
-        <h2 className="text-base font-semibold text-gray-900 mb-1">Deluxe processing prompt</h2>
+        <h2 className="text-base font-semibold text-gray-900 mb-1">AI processing prompt</h2>
         <p className="text-sm text-gray-500 mb-4">
-          When you click <strong>Download Deluxe</strong>, your transcript is sent to an AI with this prompt.
+          When you click <strong>Download (docx)</strong>, your transcript is sent to an AI with this prompt.
           Example: <em>"Summarise this podcast transcript in bullet points."</em>
         </p>
         {!promptLoading && (
@@ -247,36 +228,6 @@ Apply the following formatting rules:
         )}
       </div>
 
-      {/* Worker Token section */}
-      <div className="border-t border-gray-200 pt-8">
-        <h2 className="text-base font-semibold text-gray-900 mb-1">macOS Worker Token</h2>
-        <p className="text-sm text-gray-500 mb-4">
-          Generate a token for the macOS worker app. The raw token is shown only once — store it
-          in the app when prompted.
-        </p>
-
-        {workerToken ? (
-          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-            <p className="text-xs font-medium text-gray-600 mb-2 uppercase tracking-wide">
-              Your worker token (copy now — shown once)
-            </p>
-            <code className="block text-sm font-mono text-gray-900 break-all select-all">
-              {workerToken}
-            </code>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            <button
-              onClick={handleGenerateWorkerToken}
-              disabled={generatingToken}
-              className="bg-white border border-gray-300 text-gray-700 text-sm px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-            >
-              {generatingToken ? 'Generating…' : 'Generate worker token'}
-            </button>
-            {tokenError && <p className="text-sm text-red-600">{tokenError}</p>}
-          </div>
-        )}
-      </div>
     </div>
   )
 }

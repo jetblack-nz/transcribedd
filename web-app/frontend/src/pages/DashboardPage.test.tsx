@@ -224,49 +224,6 @@ describe('DashboardPage', () => {
     document.createElement = originalCreateElement
   })
 
-  it('should generate worker token', async () => {
-    const user = userEvent.setup()
-    mockFrom.mockImplementation(makeFromMock([]))
-    ;(mockInvoke as ReturnType<typeof vi.fn>).mockResolvedValue({
-      data: { token: 'worker-token-123' },
-      error: null,
-    })
-
-    render(<DashboardPage />)
-
-    await waitFor(() => {
-      expect(screen.getByText(/generate worker token/i)).toBeInTheDocument()
-    })
-
-    await user.click(screen.getByRole('button', { name: /generate worker token/i }))
-
-    await waitFor(() => {
-      expect(screen.getByText('worker-token-123')).toBeInTheDocument()
-      expect(screen.getByText(/copy now — shown once/i)).toBeInTheDocument()
-    })
-  })
-
-  it('should show error when worker token generation fails', async () => {
-    const user = userEvent.setup()
-    mockFrom.mockImplementation(makeFromMock([]))
-    ;(mockInvoke as ReturnType<typeof vi.fn>).mockResolvedValue({
-      data: null,
-      error: { message: 'Token generation failed' },
-    })
-
-    render(<DashboardPage />)
-
-    await waitFor(() => {
-      expect(screen.getByText(/generate worker token/i)).toBeInTheDocument()
-    })
-
-    await user.click(screen.getByRole('button', { name: /generate worker token/i }))
-
-    await waitFor(() => {
-      expect(screen.getByText('Token generation failed')).toBeInTheDocument()
-    })
-  })
-
   it('should have New job link', async () => {
     mockFrom.mockImplementation(makeFromMock([]))
 
