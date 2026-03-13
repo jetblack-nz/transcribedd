@@ -174,6 +174,13 @@ Apply the following formatting rules:
         </Link>
       </div>
 
+      {/* Timing notice */}
+      {pendingCount > 0 && (
+        <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3">
+          Long podcasts can take up to 10 minutes to transcribe — hang tight.
+        </p>
+      )}
+
       {/* Error state */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700">
@@ -206,7 +213,8 @@ Apply the following formatting rules:
         <h2 className="text-base font-semibold text-gray-900 mb-1">AI processing prompt</h2>
         <p className="text-sm text-gray-500 mb-4">
           When you click <strong>Download (docx)</strong>, your transcript is sent to an AI with this prompt.
-          Example: <em>"Summarise this podcast transcript in bullet points."</em>
+          Example: <em>"Summarise this podcast transcript in bullet points."</em>{' '}
+          Formatting can take up to 3 minutes for long episodes — please be patient.
         </p>
         {!promptLoading && (
           <div className="space-y-2">
