@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { Job } from '../types'
 
 const STATUS_CLASSES: Record<string, string> = {
@@ -7,11 +8,51 @@ const STATUS_CLASSES: Record<string, string> = {
   failed: 'bg-red-100 text-red-800',
 }
 
+type BtnState = 'idle' | 'loading' | 'done'
+
 interface JobCardProps {
   job: Job
-  onDownload: (job: Job) => void
-  onDownloadDeluxe: (job: Job) => void
+  onDownload: (job: Job) => Promise<void>
+  onDownloadDeluxe: (job: Job) => Promise<void>
   hasPrompt: boolean
+}
+
+function DownloadButton({ label, onClick, disabled, title }: {
+  label: string
+  onClick: () => Promise<void>
+  disabled?: boolean
+  title?: string
+}) {
+  const [state, setState] = useState<BtnState>('idle')
+
+  const handleClick = async () => {
+    if (state !== 'idle') return
+    setState('loading')
+    try {
+      await onClick()
+      setState('done')
+      setTimeout(() => setState('idle'), 2000)
+    } catch {
+      setState('idle')
+    }
+  }
+
+  const icon = state === 'loading'
+    ? <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+    : state === 'done'
+    ? <span>✓</span>
+    : null
+
+  return (
+    <button
+      onClick={handleClick}
+      disabled={disabled || state === 'loading'}
+      title={title}
+      className="text-xs bg-gray-900 text-white px-3 py-1.5 rounded-md hover:bg-gray-700 transition-colors disabled:opacity-40 flex items-center gap-1.5"
+    >
+      {icon}{label}
+    </button>
+  )
 }
 
 export function JobCard({ job, onDownload, onDownloadDeluxe, hasPrompt }: JobCardProps) {
@@ -33,19 +74,16 @@ export function JobCard({ job, onDownload, onDownloadDeluxe, hasPrompt }: JobCar
           </span>
           {job.status === 'completed' && (
             <>
-              <button
+              <DownloadButton
+                label="Download (text)"
                 onClick={() => onDownload(job)}
-                className="text-xs bg-gray-900 text-white px-3 py-1.5 rounded-md hover:bg-gray-700 transition-colors"
-              >
-                Download
-              </button>
-              <button
+              />
+              <DownloadButton
+                label="Download (docx)"
                 onClick={() => onDownloadDeluxe(job)}
-                title={hasPrompt ? 'Process with your AI prompt' : 'Set a processing prompt in settings first'}
-                className="text-xs bg-indigo-600 text-white px-3 py-1.5 rounded-md hover:bg-indigo-500 transition-colors disabled:opacity-40"
-              >
-                ✨ Deluxe
-              </button>
+                disabled={!hasPrompt}
+                title={hasPrompt ? 'Process with your AI prompt and download as Word doc' : 'Set a processing prompt in settings first'}
+              />
             </>
           )}
         </div>

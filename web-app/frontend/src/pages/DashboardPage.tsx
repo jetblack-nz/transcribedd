@@ -109,6 +109,7 @@ Apply the following formatting rules:
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       alert(`Download failed: ${msg}`)
+      throw err
     }
   }
 
@@ -145,6 +146,7 @@ Apply the following formatting rules:
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       alert(`Deluxe download failed: ${msg}`)
+      throw err
     }
   }
 

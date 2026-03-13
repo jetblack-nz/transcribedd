@@ -198,7 +198,7 @@ describe('DashboardPage', () => {
     render(<DashboardPage />)
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: /download/i })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Download (text)' })).toBeInTheDocument()
     })
 
     const originalCreateElement = document.createElement.bind(document)
@@ -208,7 +208,7 @@ describe('DashboardPage', () => {
       return originalCreateElement(tag)
     })
 
-    await user.click(screen.getByRole('button', { name: /download/i }))
+    await user.click(screen.getByRole('button', { name: 'Download (text)' }))
 
     await waitFor(() => {
       expect(global.fetch).toHaveBeenCalledWith(
