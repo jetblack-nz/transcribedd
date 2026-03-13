@@ -157,7 +157,7 @@ Apply the following formatting rules:
       if (error) throw error
       setWorkerToken(data.token)
     } catch (err: unknown) {
-      setTokenError(err instanceof Error ? err.message : 'Failed to generate token')
+      setTokenError(err instanceof Error ? err.message : (err as any)?.message ?? 'Failed to generate token')
     } finally {
       setGeneratingToken(false)
     }

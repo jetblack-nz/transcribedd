@@ -5,12 +5,14 @@ import { render } from '../test/utils/test-utils'
 import { DashboardPage } from './DashboardPage'
 import { createMockJobs, createMockJob } from '../test/mocks/data'
 
-// Mock the supabase client - must be defined inline due to hoisting
-const mockGetSession = vi.fn()
-const mockAuthStateChange = vi.fn()
-const mockFrom = vi.fn()
-const mockChannel = vi.fn()
-const mockInvoke = vi.fn()
+// Use vi.hoisted() to declare mocks that will be available in the factory
+const { mockGetSession, mockAuthStateChange, mockFrom, mockChannel, mockInvoke } = vi.hoisted(() => ({
+  mockGetSession: vi.fn(),
+  mockAuthStateChange: vi.fn(),
+  mockFrom: vi.fn(),
+  mockChannel: vi.fn(),
+  mockInvoke: vi.fn(),
+}))
 
 vi.mock('../lib/supabase', () => ({
   supabase: {
@@ -20,6 +22,7 @@ vi.mock('../lib/supabase', () => ({
     },
     from: mockFrom,
     channel: mockChannel,
+    removeChannel: vi.fn(),
     functions: {
       invoke: mockInvoke,
     },
@@ -170,7 +173,7 @@ describe('DashboardPage', () => {
       }),
     ]
     mockFrom.mockImplementation(makeFromMock(jobs))
-    mockSupabaseAuth.getSession.mockResolvedValue({
+    mockGetSession.mockResolvedValue({
       data: {
         session: {
           access_token: 'mock-token',
@@ -198,12 +201,11 @@ describe('DashboardPage', () => {
       expect(screen.getByRole('button', { name: /download/i })).toBeInTheDocument()
     })
 
-    // Mock the click on download link
+    const originalCreateElement = document.createElement.bind(document)
     const clickSpy = vi.fn()
-    document.createElement = vi.fn().mockReturnValue({
-      href: '',
-      download: '',
-      click: clickSpy,
+    document.createElement = vi.fn().mockImplementation((tag: string) => {
+      if (tag === 'a') return { href: '', download: '', click: clickSpy }
+      return originalCreateElement(tag)
     })
 
     await user.click(screen.getByRole('button', { name: /download/i }))
@@ -219,12 +221,13 @@ describe('DashboardPage', () => {
         })
       )
     })
+    document.createElement = originalCreateElement
   })
 
   it('should generate worker token', async () => {
     const user = userEvent.setup()
     mockFrom.mockImplementation(makeFromMock([]))
-    ;(mockSupabase.functions.invoke as ReturnType<typeof vi.fn>).mockResolvedValue({
+    ;(mockInvoke as ReturnType<typeof vi.fn>).mockResolvedValue({
       data: { token: 'worker-token-123' },
       error: null,
     })
@@ -246,7 +249,7 @@ describe('DashboardPage', () => {
   it('should show error when worker token generation fails', async () => {
     const user = userEvent.setup()
     mockFrom.mockImplementation(makeFromMock([]))
-    ;(mockSupabase.functions.invoke as ReturnType<typeof vi.fn>).mockResolvedValue({
+    ;(mockInvoke as ReturnType<typeof vi.fn>).mockResolvedValue({
       data: null,
       error: { message: 'Token generation failed' },
     })
