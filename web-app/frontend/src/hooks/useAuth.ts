@@ -7,14 +7,8 @@ export function useAuth() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // If there's a PKCE ?code= in the URL, INITIAL_SESSION fires with a null
-    // session while the exchange is still in flight. Suppress loading=false
-    // on that one event so ProtectedRoute doesn't redirect before SIGNED_IN.
-    const isOAuthCallback = new URLSearchParams(window.location.search).has('code')
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
-      if (event === 'INITIAL_SESSION' && isOAuthCallback) return
       setLoading(false)
     })
 
@@ -30,7 +24,7 @@ export function useAuth() {
   const signInWithGoogle = () =>
     supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: { redirectTo: window.location.origin },
+      options: { redirectTo: `${window.location.origin}/auth/callback` },
     })
 
   const signOut = () => supabase.auth.signOut()
