@@ -25,7 +25,13 @@ export function useAuth() {
   const signIn = (email: string, password: string) =>
     supabase.auth.signInWithPassword({ email, password })
 
+  const signInWithGoogle = () =>
+    supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin },
+    })
+
   const signOut = () => supabase.auth.signOut()
 
-  return { user, loading, signUp, signIn, signOut }
+  return { user, loading, signUp, signIn, signInWithGoogle, signOut }
 }
