@@ -1,10 +1,34 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
+import { Document, Packer, Paragraph, HeadingLevel, TextRun } from 'docx'
 import { useAuth } from '../hooks/useAuth'
 import { useJobs } from '../hooks/useJobs'
 import { JobCard } from '../components/JobCard'
 import { supabase } from '../lib/supabase'
 import type { Job } from '../types'
+
+// Parses markdown-style headings and paragraphs into a Word document
+async function buildDocx(text: string): Promise<Blob> {
+  const lines = text.split('\n')
+  const children: Paragraph[] = []
+
+  for (const line of lines) {
+    if (line.startsWith('### ')) {
+      children.push(new Paragraph({ text: line.slice(4).trim(), heading: HeadingLevel.HEADING_3 }))
+    } else if (line.startsWith('## ')) {
+      children.push(new Paragraph({ text: line.slice(3).trim(), heading: HeadingLevel.HEADING_2 }))
+    } else if (line.startsWith('# ')) {
+      children.push(new Paragraph({ text: line.slice(2).trim(), heading: HeadingLevel.HEADING_1 }))
+    } else if (line.trim() === '') {
+      children.push(new Paragraph({ children: [new TextRun('')] }))
+    } else {
+      children.push(new Paragraph({ children: [new TextRun(line)] }))
+    }
+  }
+
+  const doc = new Document({ sections: [{ children }] })
+  return Packer.toBlob(doc)
+}
 
 export function DashboardPage() {
   const { user } = useAuth()
@@ -111,7 +135,13 @@ Apply the following formatting rules:
       )
       const body = await resp.json()
       if (!resp.ok) throw new Error(body.error ?? `HTTP ${resp.status}`)
-      triggerDownload(body.text, `${job.episode_title ?? job.id} (deluxe).txt`)
+      const docxBlob = await buildDocx(body.text)
+      const url = URL.createObjectURL(docxBlob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${job.episode_title ?? job.id} (deluxe).docx`
+      a.click()
+      URL.revokeObjectURL(url)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       alert(`Deluxe download failed: ${msg}`)
