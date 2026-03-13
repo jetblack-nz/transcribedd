@@ -7,7 +7,64 @@ const corsHeaders = {
 }
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions'
-const GROQ_MODEL = 'llama-3.3-70b-versatile'
+const GROQ_MODEL = 'llama-3.1-8b-instant'
+
+// Groq free tier: 6k TPM. Keep input well under ~1500 tokens (~6k chars) so
+// there's budget for the system prompt and output tokens within the same window.
+const MAX_CHUNK_CHARS = 6_000
+
+function splitIntoChunks(text: string, maxChars: number): string[] {
+  if (text.length <= maxChars) return [text]
+  const chunks: string[] = []
+  let start = 0
+  while (start < text.length) {
+    let end = start + maxChars
+    if (end < text.length) {
+      const boundary = text.lastIndexOf('\n', end)
+      if (boundary > start + maxChars / 2) end = boundary + 1
+    }
+    chunks.push(text.slice(start, end))
+    start = end
+  }
+  return chunks
+}
+
+/** Parse "Please try again in Xs" from a Groq rate-limit message. Falls back to `fallback` seconds. */
+function parseRetryAfter(message: string, fallback = 15): number {
+  const m = message.match(/try again in ([0-9.]+)s/)
+  return m ? Math.ceil(parseFloat(m[1])) + 1 : fallback
+}
+
+async function groqChatWithRetry(
+  apiKey: string,
+  payload: unknown,
+  maxRetries = 4,
+): Promise<string> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const resp = await fetch(GROQ_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    })
+    const body = await resp.json()
+    if (resp.status === 429) {
+      if (attempt === maxRetries) {
+        throw new Error(body.error?.message ?? 'Groq rate limit exceeded — please try again in a minute.')
+      }
+      const waitSecs = parseRetryAfter(body.error?.message ?? '', 15)
+      await new Promise((r) => setTimeout(r, waitSecs * 1000))
+      continue
+    }
+    if (!resp.ok) {
+      throw new Error(body.error?.message ?? `Groq API error ${resp.status}`)
+    }
+    return body.choices?.[0]?.message?.content ?? ''
+  }
+  throw new Error('Groq request failed after retries')
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -101,7 +158,7 @@ serve(async (req) => {
     }
     const transcript = await fileData.text()
 
-    // Call Groq
+    // Call Groq — chunk the transcript to stay within free-tier TPM limits
     const groqKey = Deno.env.get('GROQ_API_KEY')
     if (!groqKey) {
       return new Response(
@@ -110,29 +167,23 @@ serve(async (req) => {
       )
     }
 
-    const groqResp = await fetch(GROQ_API_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${groqKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    const chunks = splitIntoChunks(transcript, MAX_CHUNK_CHARS)
+    const processedChunks: string[] = []
+
+    for (const chunk of chunks) {
+      const result = await groqChatWithRetry(groqKey, {
         model: GROQ_MODEL,
         messages: [
           { role: 'system', content: processingPrompt },
-          { role: 'user', content: transcript },
+          { role: 'user', content: chunk },
         ],
         temperature: 0.3,
-        max_tokens: 4096,
-      }),
-    })
-
-    const groqBody = await groqResp.json()
-    if (!groqResp.ok) {
-      throw new Error(groqBody.error?.message ?? `Groq API error ${groqResp.status}`)
+        max_tokens: 2048,
+      })
+      processedChunks.push(result)
     }
 
-    const text: string = groqBody.choices?.[0]?.message?.content ?? ''
+    const text = processedChunks.join('\n\n')
 
     return new Response(
       JSON.stringify({ text }),
