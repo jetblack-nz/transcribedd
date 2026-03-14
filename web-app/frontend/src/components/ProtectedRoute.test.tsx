@@ -88,4 +88,33 @@ describe('ProtectedRoute', () => {
       expect(mockNavigate).toHaveBeenCalledWith('/auth')
     })
   })
+
+  it('renders the Navigate component pointing to /auth for unauthenticated users', async () => {
+    mockAuthSession(null)
+
+    render(
+      <ProtectedRoute>
+        <div>Content</div>
+      </ProtectedRoute>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Redirecting to /auth')).toBeInTheDocument()
+    })
+  })
+
+  it('hides the loading spinner once auth resolves to authenticated', async () => {
+    mockAuthSession({ id: 'user-123', email: 'test@example.com' })
+
+    render(
+      <ProtectedRoute>
+        <div>Protected</div>
+      </ProtectedRoute>
+    )
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading…')).not.toBeInTheDocument()
+      expect(screen.getByText('Protected')).toBeInTheDocument()
+    })
+  })
 })

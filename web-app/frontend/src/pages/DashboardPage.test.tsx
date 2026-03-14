@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { render } from '../test/utils/test-utils'
@@ -12,6 +12,14 @@ const { mockGetSession, mockAuthStateChange, mockFrom, mockChannel, mockInvoke }
   mockFrom: vi.fn(),
   mockChannel: vi.fn(),
   mockInvoke: vi.fn(),
+}))
+
+vi.mock('docx', () => ({
+  Document: vi.fn(),
+  Packer: { toBlob: vi.fn().mockResolvedValue(new Blob(['docx content'])) },
+  Paragraph: vi.fn(),
+  HeadingLevel: { HEADING_1: 'HEADING_1', HEADING_2: 'HEADING_2', HEADING_3: 'HEADING_3' },
+  TextRun: vi.fn(),
 }))
 
 vi.mock('../lib/supabase', () => ({
@@ -99,6 +107,10 @@ describe('DashboardPage', () => {
     resetAllMocks()
     vi.clearAllMocks()
     mockAuthSession({ id: 'user-123', email: 'test@example.com' })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('should show loading state initially', () => {
@@ -222,6 +234,255 @@ describe('DashboardPage', () => {
       )
     })
     document.createElement = originalCreateElement
+  })
+
+  // --- Prompt section ---
+
+  it('renders the prompt textarea after promptLoading resolves', async () => {
+    mockFrom.mockImplementation(makeFromMock([]))
+
+    render(<DashboardPage />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox')).toBeInTheDocument()
+    })
+  })
+
+  it('loads the saved prompt from the profiles table', async () => {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'profiles') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn(() => Promise.resolve({ data: { processing_prompt: 'My custom prompt' }, error: null })),
+            })),
+          })),
+          update: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ data: null, error: null })) })),
+        }
+      }
+      return makeFromMock([])(table)
+    })
+
+    render(<DashboardPage />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox')).toHaveValue('My custom prompt')
+    })
+  })
+
+  it('falls back to the default prompt when profiles returns null processing_prompt', async () => {
+    mockFrom.mockImplementation(makeFromMock([]))
+
+    render(<DashboardPage />)
+
+    await waitFor(() => {
+      const textarea = screen.getByRole('textbox') as HTMLTextAreaElement
+      expect(textarea.value).toContain('transcript formatter')
+    })
+  })
+
+  it('updates the textarea value as the user types', async () => {
+    const user = userEvent.setup()
+    mockFrom.mockImplementation(makeFromMock([]))
+
+    render(<DashboardPage />)
+
+    await waitFor(() => screen.getByRole('textbox'))
+
+    const textarea = screen.getByRole('textbox')
+    await user.clear(textarea)
+    await user.type(textarea, 'New prompt text')
+
+    expect(textarea).toHaveValue('New prompt text')
+  })
+
+  it('shows "Saving…" on the Save button while saving', async () => {
+    const user = userEvent.setup()
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'profiles') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn(() => Promise.resolve({ data: { processing_prompt: null }, error: null })),
+            })),
+          })),
+          update: vi.fn(() => ({ eq: vi.fn(() => new Promise(() => {})) })), // never resolves
+        }
+      }
+      return makeFromMock([])(table)
+    })
+
+    render(<DashboardPage />)
+
+    await waitFor(() => screen.getByRole('button', { name: 'Save prompt' }))
+    await user.click(screen.getByRole('button', { name: 'Save prompt' }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Saving…' })).toBeInTheDocument())
+  })
+
+  it('shows "Saved ✓" after a successful save', async () => {
+    const user = userEvent.setup()
+    mockFrom.mockImplementation(makeFromMock([]))
+
+    render(<DashboardPage />)
+
+    await waitFor(() => screen.getByRole('button', { name: 'Save prompt' }))
+    await user.click(screen.getByRole('button', { name: 'Save prompt' }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Saved ✓' })).toBeInTheDocument())
+  })
+
+  it('resets Save button label back to "Save prompt" after 2 seconds', async () => {
+    const user = userEvent.setup()
+    mockFrom.mockImplementation(makeFromMock([]))
+    render(<DashboardPage />)
+    await waitFor(() => screen.getByRole('button', { name: 'Save prompt' }))
+
+    await user.click(screen.getByRole('button', { name: 'Save prompt' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Saved ✓' })).toBeInTheDocument())
+
+    // Wait for the real 2-second reset timer
+    await new Promise<void>(resolve => { setTimeout(resolve, 2100) })
+    expect(screen.getByRole('button', { name: 'Save prompt' })).toBeInTheDocument()
+  }, 10000)
+
+  // --- Docx download ---
+
+  it('calls process-transcript with auth token when Download (docx) is clicked', async () => {
+    const jobs = [createMockJob({ id: 'job-1', status: 'completed', transcript_path: 'path/to/file.txt', episode_title: 'Test Episode' })]
+    mockFrom.mockImplementation(makeFromMock(jobs))
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'mock-token', user: { id: 'user-123', email: 'test@example.com' } } },
+      error: null,
+    })
+    ;(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ text: 'transcript content' }),
+    })
+
+    const user = userEvent.setup()
+    render(<DashboardPage />)
+
+    await waitFor(() => screen.getByRole('button', { name: 'Save prompt' }))
+
+    const originalCreateElement = document.createElement.bind(document)
+    document.createElement = vi.fn().mockImplementation((tag: string) => {
+      if (tag === 'a') return { href: '', download: '', click: vi.fn() }
+      return originalCreateElement(tag)
+    })
+
+    await waitFor(() => screen.getByRole('button', { name: 'Download (docx)' }))
+    await user.click(screen.getByRole('button', { name: 'Download (docx)' }))
+
+    await waitFor(() =>
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/functions/v1/process-transcript'),
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({ Authorization: 'Bearer mock-token' }),
+        }),
+      )
+    )
+
+    document.createElement = originalCreateElement
+  })
+
+  it('disables the Download (docx) button when the prompt textarea is empty', async () => {
+    const user = userEvent.setup()
+    const jobs = [createMockJob({ id: 'job-1', status: 'completed', transcript_path: 'path/to/file.txt' })]
+    mockFrom.mockImplementation(makeFromMock(jobs))
+
+    render(<DashboardPage />)
+
+    await waitFor(() => screen.getByRole('button', { name: 'Download (docx)' }))
+
+    const textarea = screen.getByRole('textbox')
+    await user.clear(textarea)
+
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Download (docx)' })).toBeDisabled()
+    )
+  })
+
+  // --- Text download edge cases ---
+
+  it('shows alert when getSession returns no session', async () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const jobs = [createMockJob({ id: 'job-1', status: 'completed', transcript_path: 'path/to/file.txt', episode_title: 'Test Episode' })]
+    mockFrom.mockImplementation(makeFromMock(jobs))
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null })
+
+    const user = userEvent.setup()
+    render(<DashboardPage />)
+
+    await waitFor(() => screen.getByRole('button', { name: 'Download (text)' }))
+    await user.click(screen.getByRole('button', { name: 'Download (text)' }))
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining('Not authenticated')))
+    alertSpy.mockRestore()
+  })
+
+  it('shows alert when get-transcript-url returns a non-ok response', async () => {
+    const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
+    const jobs = [createMockJob({ id: 'job-1', status: 'completed', transcript_path: 'path/to/file.txt', episode_title: 'Test' })]
+    mockFrom.mockImplementation(makeFromMock(jobs))
+    mockGetSession.mockResolvedValue({
+      data: { session: { access_token: 'mock-token', user: { id: 'user-123' } } },
+      error: null,
+    })
+    ;(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: false,
+      json: () => Promise.resolve({ error: 'Server error' }),
+    })
+
+    const user = userEvent.setup()
+    render(<DashboardPage />)
+
+    await waitFor(() => screen.getByRole('button', { name: 'Download (text)' }))
+    await user.click(screen.getByRole('button', { name: 'Download (text)' }))
+
+    await waitFor(() => expect(alertSpy).toHaveBeenCalled())
+    alertSpy.mockRestore()
+  })
+
+  // --- Timing notice ---
+
+  it('shows timing notice banner when a job is pending', async () => {
+    const jobs = [createMockJob({ id: '1', status: 'pending' })]
+    mockFrom.mockImplementation(makeFromMock(jobs))
+
+    render(<DashboardPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/Long podcasts can take up to 10 minutes/)).toBeInTheDocument()
+    })
+  })
+
+  it('does not show timing notice when all jobs are completed', async () => {
+    const jobs = [createMockJob({ id: '1', status: 'completed' })]
+    mockFrom.mockImplementation(makeFromMock(jobs))
+
+    render(<DashboardPage />)
+
+    await waitFor(() => screen.getByText('Test Episode'))
+    expect(screen.queryByText(/Long podcasts can take up to 10 minutes/)).not.toBeInTheDocument()
+  })
+
+  // --- Job counts ---
+
+  it('shows only the completed count when no jobs are in progress', async () => {
+    const jobs = [
+      createMockJob({ id: '1', status: 'completed' }),
+      createMockJob({ id: '2', status: 'completed' }),
+    ]
+    mockFrom.mockImplementation(makeFromMock(jobs))
+
+    render(<DashboardPage />)
+
+    await waitFor(() => {
+      expect(screen.getByText('2 completed')).toBeInTheDocument()
+      expect(screen.queryByText(/in progress/)).not.toBeInTheDocument()
+    })
   })
 
   it('should have New job link', async () => {

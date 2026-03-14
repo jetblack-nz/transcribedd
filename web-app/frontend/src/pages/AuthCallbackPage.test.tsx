@@ -71,6 +71,40 @@ describe('AuthCallbackPage', () => {
     expect(mockNavigate).not.toHaveBeenCalled()
   })
 
+  it('renders a "Back to sign in" link pointing to /auth in the error state', async () => {
+    mockGetSession.mockResolvedValue({
+      data: { session: null },
+      error: { message: 'Exchange failed' },
+    })
+    render(<AuthCallbackPage />)
+    await waitFor(() => {
+      const link = screen.getByRole('link', { name: 'Back to sign in' })
+      expect(link).toBeInTheDocument()
+      expect(link).toHaveAttribute('href', '/auth')
+    })
+  })
+
+  it('reads bare ?error= param as the error message when error_description is absent', async () => {
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, search: '?error=access_denied' },
+      writable: true,
+    })
+    render(<AuthCallbackPage />)
+    await waitFor(() => expect(screen.getByText('access_denied')).toBeInTheDocument())
+    expect(mockGetSession).not.toHaveBeenCalled()
+    Object.defineProperty(window, 'location', { value: { ...window.location, search: '' }, writable: true })
+  })
+
+  it('decodes plus-encoded spaces in the URL error param', async () => {
+    Object.defineProperty(window, 'location', {
+      value: { ...window.location, search: '?error_description=Email+not+confirmed' },
+      writable: true,
+    })
+    render(<AuthCallbackPage />)
+    await waitFor(() => expect(screen.getByText('Email not confirmed')).toBeInTheDocument())
+    Object.defineProperty(window, 'location', { value: { ...window.location, search: '' }, writable: true })
+  })
+
   it('shows URL error when Supabase redirects with ?error_description=', async () => {
     // Simulate Supabase appending error params to the callback URL
     Object.defineProperty(window, 'location', {

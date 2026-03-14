@@ -19,10 +19,6 @@ export interface Job {
 export interface Profile {
   id: string
   email: string
-  worker_token_hash: string | null
-  worker_token_created_at: string | null
-  worker_token_last_used_at: string | null
-  worker_token_revoked_at: string | null
   subscription: string
   jobs_completed: number
   created_at: string

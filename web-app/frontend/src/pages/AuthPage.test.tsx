@@ -144,6 +144,37 @@ describe('AuthPage', () => {
     expect(screen.getByText('Loading…')).toBeInTheDocument()
   })
 
+  it('renders the "Sign in with Google" button', () => {
+    render(<AuthPage />)
+    expect(screen.getByRole('button', { name: /sign in with google/i })).toBeInTheDocument()
+  })
+
+  it('calls signInWithGoogle when the Google button is clicked', async () => {
+    const user = userEvent.setup()
+    mockSignInWithOAuth.mockResolvedValue({ data: {}, error: null })
+    render(<AuthPage />)
+    await user.click(screen.getByRole('button', { name: /sign in with google/i }))
+    expect(mockSignInWithOAuth).toHaveBeenCalled()
+  })
+
+  it('renders the "Access by invitation only." caption', () => {
+    render(<AuthPage />)
+    expect(screen.getByText('Access by invitation only.')).toBeInTheDocument()
+  })
+
+  it('handles a thrown plain-object error by showing its message property', async () => {
+    const user = userEvent.setup()
+    mockSignInWithPassword.mockResolvedValue({
+      data: { user: null, session: null },
+      error: { message: 'Plain object error' },
+    })
+    render(<AuthPage />)
+    await user.type(screen.getByLabelText(/email/i), 'a@b.com')
+    await user.type(screen.getByLabelText(/password/i), 'pass')
+    await user.click(screen.getByRole('button', { name: 'Sign in' }))
+    await waitFor(() => expect(screen.getByText('Plain object error')).toBeInTheDocument())
+  })
+
   it('should clear error when submitting again', async () => {
     const user = userEvent.setup()
     mockSignInWithPassword

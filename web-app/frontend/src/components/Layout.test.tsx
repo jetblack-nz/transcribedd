@@ -132,6 +132,40 @@ describe('Layout', () => {
     expect(screen.getByText('Transcribedd').closest('a')).toHaveAttribute('href', '/')
   })
 
+  it('Jobs nav link has href="/"', async () => {
+    mockAuthSession({ id: 'user-123', email: 'test@example.com' })
+
+    render(<Layout><div /></Layout>)
+
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: 'Jobs' })).toHaveAttribute('href', '/')
+    })
+  })
+
+  it('Search nav link has href="/search"', async () => {
+    mockAuthSession({ id: 'user-123', email: 'test@example.com' })
+
+    render(<Layout><div /></Layout>)
+
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: 'Search' })).toHaveAttribute('href', '/search')
+    })
+  })
+
+  it('still navigates to /auth even when signOut returns an error', async () => {
+    const user = userEvent.setup()
+    mockAuthSession({ id: 'user-123', email: 'test@example.com' })
+    mockSignOut.mockResolvedValue({ error: { message: 'Sign out failed' } })
+
+    render(<Layout><div /></Layout>)
+
+    await waitFor(() => expect(screen.getByText('Sign out')).toBeInTheDocument())
+
+    await user.click(screen.getByText('Sign out'))
+
+    expect(mockNavigate).toHaveBeenCalledWith('/auth')
+  })
+
   it('should call signOut and navigate to /auth when sign out button is clicked', async () => {
     const user = userEvent.setup()
     mockAuthSession({ id: 'user-123', email: 'test@example.com' })

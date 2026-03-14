@@ -1,11 +1,15 @@
-import { describe, it, expect, vi } from 'vitest'
-import { screen } from '@testing-library/react'
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { render } from '../test/utils/test-utils'
 import { JobCard } from './JobCard'
 import { createMockJob } from '../test/mocks/data'
 
 describe('JobCard', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('should render job details', () => {
     const job = createMockJob({
       podcast_title: 'My Podcast',
@@ -103,5 +107,122 @@ describe('JobCard', () => {
 
     // Date format depends on locale, just check it's rendered
     expect(screen.getByText(/Jan|15|2026/)).toBeInTheDocument()
+  })
+
+  // onDownloadDeluxe
+  it('calls onDownloadDeluxe when the Download (docx) button is clicked', async () => {
+    const user = userEvent.setup()
+    const job = createMockJob({ status: 'completed' })
+    const onDownloadDeluxe = vi.fn().mockResolvedValue(undefined)
+
+    render(<JobCard job={job} onDownload={async () => {}} onDownloadDeluxe={onDownloadDeluxe} hasPrompt={true} />)
+
+    await user.click(screen.getByRole('button', { name: 'Download (docx)' }))
+
+    expect(onDownloadDeluxe).toHaveBeenCalledWith(job)
+  })
+
+  // hasPrompt prop controls docx button
+  it('disables the Download (docx) button when hasPrompt is false', () => {
+    const job = createMockJob({ status: 'completed' })
+    render(<JobCard job={job} onDownload={async () => {}} onDownloadDeluxe={async () => {}} hasPrompt={false} />)
+    expect(screen.getByRole('button', { name: 'Download (docx)' })).toBeDisabled()
+  })
+
+  it('enables the Download (docx) button when hasPrompt is true', () => {
+    const job = createMockJob({ status: 'completed' })
+    render(<JobCard job={job} onDownload={async () => {}} onDownloadDeluxe={async () => {}} hasPrompt={true} />)
+    expect(screen.getByRole('button', { name: 'Download (docx)' })).not.toBeDisabled()
+  })
+
+  it('shows "Set a processing prompt in settings first" title when hasPrompt is false', () => {
+    const job = createMockJob({ status: 'completed' })
+    render(<JobCard job={job} onDownload={async () => {}} onDownloadDeluxe={async () => {}} hasPrompt={false} />)
+    expect(screen.getByRole('button', { name: 'Download (docx)' })).toHaveAttribute(
+      'title',
+      'Set a processing prompt in settings first',
+    )
+  })
+
+  it('shows "Process with your AI prompt and download as Word doc" title when hasPrompt is true', () => {
+    const job = createMockJob({ status: 'completed' })
+    render(<JobCard job={job} onDownload={async () => {}} onDownloadDeluxe={async () => {}} hasPrompt={true} />)
+    expect(screen.getByRole('button', { name: 'Download (docx)' })).toHaveAttribute(
+      'title',
+      'Process with your AI prompt and download as Word doc',
+    )
+  })
+
+  // DownloadButton state machine
+  it('disables the button and shows a spinner while download is in flight', async () => {
+    const user = userEvent.setup()
+    let resolveDownload!: () => void
+    const onDownload = vi.fn().mockReturnValue(new Promise<void>((resolve) => { resolveDownload = resolve }))
+    const job = createMockJob({ status: 'completed' })
+
+    const { container } = render(
+      <JobCard job={job} onDownload={onDownload} onDownloadDeluxe={async () => {}} hasPrompt={false} />,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Download (text)' }))
+
+    expect(screen.getByRole('button', { name: 'Download (text)' })).toBeDisabled()
+    expect(container.querySelector('.animate-spin')).toBeInTheDocument()
+
+    resolveDownload()
+  })
+
+  it('shows ✓ immediately after a successful download', async () => {
+    const user = userEvent.setup()
+    const onDownload = vi.fn().mockResolvedValue(undefined)
+    const job = createMockJob({ status: 'completed' })
+
+    render(<JobCard job={job} onDownload={onDownload} onDownloadDeluxe={async () => {}} hasPrompt={false} />)
+
+    await user.click(screen.getByRole('button', { name: 'Download (text)' }))
+
+    await waitFor(() => expect(screen.getByText('✓')).toBeInTheDocument())
+  })
+
+  it('reverts the button to idle after 2 seconds following success', async () => {
+    const user = userEvent.setup()
+    const onDownload = vi.fn().mockResolvedValue(undefined)
+    const job = createMockJob({ status: 'completed' })
+
+    render(<JobCard job={job} onDownload={onDownload} onDownloadDeluxe={async () => {}} hasPrompt={false} />)
+
+    await user.click(screen.getByRole('button', { name: 'Download (text)' }))
+    await waitFor(() => expect(screen.getByText('✓')).toBeInTheDocument())
+
+    // Wait for the real 2-second reset timer
+    await new Promise<void>(resolve => { setTimeout(resolve, 2100) })
+    expect(screen.queryByText('✓')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Download (text)' })).not.toBeDisabled()
+  }, 10000)
+
+  it('reverts the button to idle immediately when the download rejects', async () => {
+    const user = userEvent.setup()
+    const onDownload = vi.fn().mockRejectedValue(new Error('fail'))
+    const job = createMockJob({ status: 'completed' })
+
+    const { container } = render(
+      <JobCard job={job} onDownload={onDownload} onDownloadDeluxe={async () => {}} hasPrompt={false} />,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Download (text)' }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Download (text)' })).not.toBeDisabled())
+    expect(container.querySelector('.animate-spin')).not.toBeInTheDocument()
+    expect(screen.queryByText('✓')).not.toBeInTheDocument()
+  })
+
+  // error_message title attribute
+  it('sets the title attribute on the error paragraph to the full error_message', () => {
+    const errorMessage = 'Detailed transcription failure reason'
+    const job = createMockJob({ status: 'failed', error_message: errorMessage })
+
+    render(<JobCard job={job} onDownload={async () => {}} onDownloadDeluxe={async () => {}} hasPrompt={false} />)
+
+    expect(screen.getByText(errorMessage)).toHaveAttribute('title', errorMessage)
   })
 })

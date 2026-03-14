@@ -174,6 +174,79 @@ describe('useJobs', () => {
     expect(mockChannel).toHaveBeenCalledWith('jobs-realtime')
   })
 
+  it('calls fetchJobs again when the realtime channel fires a callback', async () => {
+    let realtimeCallback: (() => void) | null = null
+
+    mockSupabaseFrom.mockReturnValue({
+      select: vi.fn(() => ({
+        order: vi.fn(() => Promise.resolve({ data: [], error: null })),
+      })),
+    })
+
+    const channelMock = { on: vi.fn(), subscribe: vi.fn() }
+    channelMock.on.mockImplementation((_event: string, _filter: unknown, cb: () => void) => {
+      realtimeCallback = cb
+      return channelMock
+    })
+    mockChannel.mockReturnValue(channelMock)
+
+    renderHook(() => useJobs('user-123'))
+
+    await waitFor(() => expect(mockSupabaseFrom).toHaveBeenCalled())
+
+    const callsBefore = mockSupabaseFrom.mock.calls.length
+    realtimeCallback!()
+
+    await waitFor(() => {
+      expect(mockSupabaseFrom.mock.calls.length).toBeGreaterThan(callsBefore)
+    })
+  })
+
+  it('fetches jobs when userId changes from undefined to a defined value', async () => {
+    mockSupabaseFrom.mockReturnValue({
+      select: vi.fn(() => ({ order: vi.fn(() => Promise.resolve({ data: [], error: null })) })),
+    })
+
+    const { rerender, result } = renderHook(({ userId }) => useJobs(userId), {
+      initialProps: { userId: undefined as string | undefined },
+    })
+
+    expect(mockSupabaseFrom).not.toHaveBeenCalled()
+
+    rerender({ userId: 'user-123' })
+
+    await waitFor(() => expect(result.current.loading).toBe(false))
+    expect(mockSupabaseFrom).toHaveBeenCalled()
+  })
+
+  it('includes audio_file_url in the insert payload when provided', async () => {
+    const insertMock = vi.fn(() => ({
+      select: vi.fn(() => ({
+        single: vi.fn(() => Promise.resolve({ data: createMockJob(), error: null })),
+      })),
+    }))
+
+    mockSupabaseFrom
+      .mockReturnValueOnce({
+        select: vi.fn(() => ({ order: vi.fn(() => Promise.resolve({ data: [], error: null })) })),
+      })
+      .mockReturnValueOnce({ insert: insertMock })
+
+    const { result } = renderHook(() => useJobs('user-123'))
+    await waitFor(() => expect(result.current.loading).toBe(false))
+
+    await result.current.createJob({
+      podcast_title: 'Podcast',
+      episode_title: 'Episode',
+      episode_url: 'https://example.com/ep.mp3',
+      audio_file_url: 'https://example.com/audio.mp3',
+    })
+
+    expect(insertMock).toHaveBeenCalledWith(expect.objectContaining({
+      audio_file_url: 'https://example.com/audio.mp3',
+    }))
+  })
+
   it('should unsubscribe on unmount', async () => {
     mockSupabaseFrom.mockReturnValue({
       select: vi.fn(() => ({
