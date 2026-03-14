@@ -7,8 +7,58 @@ actor TranscriptionService {
 
     private init() {}
 
+    // MARK: - ffmpeg conversion
+
+    /// Converts any audio format to 16 kHz mono WAV (the only format whisper-cli natively reads).
+    /// Returns the path to the converted file; the caller must delete it when done.
+    private func convertToWav(_ input: URL) async throws -> URL {
+        // Find ffmpeg: Homebrew arm64 puts it at /opt/homebrew/bin, x86 at /usr/local/bin.
+        let candidates = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"]
+        guard let ffmpegPath = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
+            throw WorkerError.transcriptionFailed(
+                "ffmpeg not found. Install it with: brew install ffmpeg"
+            )
+        }
+
+        let wav = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("wav")
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: ffmpegPath)
+        process.arguments = [
+            "-y",               // overwrite without asking
+            "-i", input.path,   // input file
+            "-ar", "16000",     // 16 kHz sample rate (whisper requirement)
+            "-ac", "1",         // mono
+            "-c:a", "pcm_s16le",// 16-bit PCM
+            wav.path
+        ]
+        let errPipe = Pipe()
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError  = errPipe
+        try process.run()
+
+        return try await withCheckedThrowingContinuation { continuation in
+            process.terminationHandler = { p in
+                if p.terminationStatus == 0 {
+                    continuation.resume(returning: wav)
+                } else {
+                    let msg = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(),
+                                     encoding: .utf8)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? "unknown ffmpeg error"
+                    continuation.resume(
+                        throwing: WorkerError.transcriptionFailed("ffmpeg conversion failed: \(msg)")
+                    )
+                }
+            }
+        }
+    }
+
+    // MARK: - Transcription
+
     /// Transcribes the given audio file and returns the plain-text transcript.
-    /// Supported formats: mp3, wav, flac, ogg.
+    /// Non-WAV files are automatically converted via ffmpeg first.
     /// `onProgress` is called on an arbitrary thread with each "progress = X%" line.
     func transcribe(audioFile url: URL, onProgress: (@Sendable (String) -> Void)? = nil) async throws -> String {
         // Read MainActor-isolated settings before entering actor context.
@@ -25,8 +75,21 @@ actor TranscriptionService {
             throw WorkerError.transcriptionFailed("Whisper model not found at \(modelPath)")
         }
 
+        // whisper-cli only reads WAV natively; convert everything else via ffmpeg.
+        let wavExtensions: Set<String> = ["wav"]
+        let needsConversion = !wavExtensions.contains(url.pathExtension.lowercased())
+        let audioInput: URL
+        if needsConversion {
+            audioInput = try await convertToWav(url)
+        } else {
+            audioInput = url
+        }
+        defer {
+            if needsConversion { try? FileManager.default.removeItem(at: audioInput) }
+        }
+
         // whisper-cli -otxt writes <audiofile-without-extension>.txt next to the input file.
-        let outputBase = url.deletingPathExtension().path
+        let outputBase = audioInput.deletingPathExtension().path
         let outputTxt  = URL(fileURLWithPath: outputBase).appendingPathExtension("txt")
 
         let process = Process()
@@ -34,10 +97,10 @@ actor TranscriptionService {
         process.arguments = [
             "-m",  modelPath,
             "-otxt",
-            "--output-file", outputBase,
+            "-of", outputBase,          // short form, supported in all whisper-cli versions
             "--print-progress",
             "-t",  "\(ProcessInfo.processInfo.processorCount)",
-            url.path          // positional audio file argument
+            "-f",  audioInput.path      // explicit -f flag, more reliable than positional arg
         ]
 
         let stdoutPipe = Pipe()
@@ -62,21 +125,27 @@ actor TranscriptionService {
         return try await withCheckedThrowingContinuation { continuation in
             process.terminationHandler = { p in
                 stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                // Always capture stderr — useful for diagnostics whether exit was 0 or not.
+                let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                let stderr = String(data: stderrData, encoding: .utf8)?
+                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
                 if p.terminationStatus == 0 {
                     do {
                         let text = try String(contentsOf: outputTxt, encoding: .utf8)
                         try? FileManager.default.removeItem(at: outputTxt)
                         continuation.resume(returning: text)
                     } catch {
+                        // whisper-cli exited 0 but didn't write the file — include stderr for diagnosis.
+                        let detail = stderr.isEmpty ? error.localizedDescription : stderr
                         continuation.resume(
-                            throwing: WorkerError.transcriptionFailed("Could not read output file: \(error)")
+                            throwing: WorkerError.transcriptionFailed("No output produced: \(detail)")
                         )
                     }
                 } else {
-                    let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                    let stderr = String(data: stderrData, encoding: .utf8) ?? "unknown error"
+                    let detail = stderr.isEmpty ? "exit code \(p.terminationStatus)" : stderr
                     continuation.resume(
-                        throwing: WorkerError.transcriptionFailed(stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+                        throwing: WorkerError.transcriptionFailed(detail)
                     )
                 }
             }
