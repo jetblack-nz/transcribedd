@@ -28,10 +28,31 @@ test.describe('Dashboard', () => {
 
   test('should sign out and redirect to auth page', async ({ authenticatedPage: page }) => {
     await page.goto('/')
-    
+
     await page.getByRole('button', { name: /sign out/i }).click()
-    
+
     await expect(page).toHaveURL('/auth', { timeout: 5000 })
+  })
+
+  test('should display AI processing prompt section', async ({ authenticatedPage: page }) => {
+    await page.goto('/')
+
+    await expect(page.getByRole('heading', { name: 'AI processing prompt' })).toBeVisible()
+    await expect(page.getByPlaceholder(/enter your processing prompt/i)).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Save prompt' })).toBeVisible()
+  })
+
+  test('should save processing prompt and show confirmation', async ({ authenticatedPage: page }) => {
+    await page.goto('/')
+
+    const textarea = page.getByPlaceholder(/enter your processing prompt/i)
+    await expect(textarea).toBeVisible()
+
+    // Edit the prompt then save
+    await textarea.fill('Summarise this podcast in bullet points.')
+    await page.getByRole('button', { name: 'Save prompt' }).click()
+
+    await expect(page.getByRole('button', { name: /saved/i })).toBeVisible({ timeout: 5000 })
   })
 
 })

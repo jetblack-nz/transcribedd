@@ -46,3 +46,20 @@ test.describe('Protected Routes', () => {
     await expect(page).toHaveURL('/auth', { timeout: 5000 })
   })
 })
+
+test.describe('Auth Callback', () => {
+  test('should display error when OAuth error is in URL params', async ({ page }) => {
+    await page.goto('/auth/callback?error=access_denied&error_description=Signups+not+allowed+for+this+instance')
+
+    await expect(page.getByText('Sign-in failed')).toBeVisible({ timeout: 5000 })
+    await expect(page.getByText('Signups not allowed for this instance')).toBeVisible()
+    await expect(page.getByRole('link', { name: /back to sign in/i })).toBeVisible()
+  })
+
+  test('back to sign in link on callback error navigates to /auth', async ({ page }) => {
+    await page.goto('/auth/callback?error=access_denied&error_description=Email+not+confirmed')
+
+    await page.getByRole('link', { name: /back to sign in/i }).click()
+    await expect(page).toHaveURL('/auth', { timeout: 5000 })
+  })
+})
