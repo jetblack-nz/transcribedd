@@ -6,11 +6,15 @@
  * Realtime first), claims it, and submits it to RunPod Serverless.
  *
  * Required secrets (set via `supabase secrets set`):
+ *   CRON_SECRET             — Shared secret used by pg_cron to authenticate calls
+ *                             (stored encrypted in Supabase Vault — NOT the service role key)
  *   RUNPOD_API_KEY          — RunPod API key
  *   RUNPOD_ENDPOINT_ID      — RunPod Serverless endpoint ID
  *   RUNPOD_CALLBACK_URL     — Full URL of runpod-callback edge function
  *                             e.g. https://xxxx.supabase.co/functions/v1/runpod-callback
  *   RUNPOD_CALLBACK_SECRET  — Shared secret appended to webhook URL for auth
+ *
+ * SUPABASE_SERVICE_ROLE_KEY and SUPABASE_URL are injected automatically.
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -21,6 +25,13 @@ const STALE_SECONDS = 90
 Deno.serve(async (req: Request): Promise<Response> => {
   if (req.method !== 'POST') {
     return new Response('Method not allowed', { status: 405 })
+  }
+
+  // Authenticate: pg_cron passes the CRON_SECRET as a Bearer token.
+  // This is a dedicated secret — NOT the service role key.
+  const cronSecret = Deno.env.get('CRON_SECRET')
+  if (!cronSecret || req.headers.get('Authorization') !== `Bearer ${cronSecret}`) {
+    return new Response('Unauthorized', { status: 401 })
   }
 
   const supabaseUrl    = Deno.env.get('SUPABASE_URL') ?? ''

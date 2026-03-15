@@ -44,34 +44,40 @@ REVOKE EXECUTE ON FUNCTION claim_stale_job(TEXT, INT) FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION claim_stale_job(TEXT, INT) TO service_role;
 
 -- -------------------------------------------------------------------------
--- pg_cron: call trigger-worker every minute.
--- The SQL function checks for stale jobs before making the HTTP request
--- so we don't hit the edge function unnecessarily.
+-- trigger_runpod_for_stale_jobs
+--
+-- Called every minute by pg_cron. Only fires the HTTP request when there
+-- are actually stale jobs, to avoid unnecessary edge function cold-starts.
+--
+-- Auth: reads CRON_SECRET from Supabase Vault (encrypted at rest).
+--       The service role key is NEVER stored in the database.
 --
 -- Prerequisites — run once in the Supabase SQL editor after deploying:
 --
---   ALTER DATABASE postgres
---     SET app.settings.supabase_url    = 'https://<project-ref>.supabase.co';
---   ALTER DATABASE postgres
---     SET app.settings.service_role_key = '<service-role-key>';
+--   SELECT vault.create_secret(
+--     '<value of CRON_SECRET supabase secret>',
+--     'cron_secret',
+--     'pg_cron auth token for trigger-worker edge function'
+--   );
 --
--- Then reconnect (or restart the DB) for the settings to take effect.
+-- The CRON_SECRET value must match the secret set via:
+--   supabase secrets set CRON_SECRET=<value>
 -- -------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION trigger_runpod_for_stale_jobs()
 RETURNS void
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
   v_stale_count int;
   v_url         text;
-  v_key         text;
+  v_secret      text;
 BEGIN
   -- Only fire if there are actually stale jobs — avoids cold-starting the
   -- edge function on every tick when the queue is empty.
   SELECT count(*) INTO v_stale_count
-    FROM jobs
+    FROM public.jobs
     WHERE status     = 'pending'
       AND created_at < NOW() - INTERVAL '90 seconds';
 
@@ -79,14 +85,24 @@ BEGIN
     RETURN;
   END IF;
 
-  v_url := current_setting('app.settings.supabase_url')     || '/functions/v1/trigger-worker';
-  v_key := current_setting('app.settings.service_role_key');
+  -- Read CRON_SECRET from Vault (encrypted at rest — not the service role key)
+  SELECT decrypted_secret INTO v_secret
+    FROM vault.decrypted_secrets
+    WHERE name = 'cron_secret'
+    LIMIT 1;
+
+  IF v_secret IS NULL THEN
+    RAISE WARNING 'trigger_runpod_for_stale_jobs: cron_secret not found in vault';
+    RETURN;
+  END IF;
+
+  v_url := 'https://dsxfwfeuvkccepfangqd.supabase.co/functions/v1/trigger-worker';
 
   PERFORM net.http_post(
     url     := v_url,
     headers := jsonb_build_object(
       'Content-Type',  'application/json',
-      'Authorization', 'Bearer ' || v_key
+      'Authorization', 'Bearer ' || v_secret
     ),
     body    := '{}'::jsonb,
     timeout_milliseconds := 10000
