@@ -30,10 +30,7 @@ async function buildDocx(text: string): Promise<Blob> {
   return Packer.toBlob(doc)
 }
 
-export function DashboardPage() {
-  const { user } = useAuth()
-  const { jobs, loading, error } = useJobs(user?.id)
-  const DEFAULT_PROMPT = `You are a transcript formatter. Your job is to take a raw podcast transcript and format it cleanly — do NOT change, remove, summarise, or paraphrase any of the spoken content.
+const DEFAULT_PROMPT = `You are a transcript formatter. Your job is to take a raw podcast transcript and format it cleanly — do NOT change, remove, summarise, or paraphrase any of the spoken content.
 
 Apply the following formatting rules:
 - Add a top-level heading with the episode title (if identifiable from context) or "Transcript"
@@ -42,6 +39,10 @@ Apply the following formatting rules:
 - If there are clear sub-topics within a section, use a subheading
 - Preserve all words exactly as spoken — do not correct, clean up, or omit anything
 - Do not add summaries, introductions, conclusions, or any content that was not in the original transcript`
+
+export function DashboardPage() {
+  const { user } = useAuth()
+  const { jobs, loading, error } = useJobs(user?.id)
 
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT)
   const [promptLoading, setPromptLoading] = useState(true)

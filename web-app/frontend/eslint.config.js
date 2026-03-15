@@ -20,4 +20,22 @@ export default defineConfig([
       globals: globals.browser,
     },
   },
+  // Test files: relax rules that are impractical for mock-heavy test code
+  {
+    files: ['**/*.test.{ts,tsx}', '**/*.spec.{ts,tsx}', 'src/test/**/*.{ts,tsx}'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+      '@typescript-eslint/no-unused-vars': 'off',
+      'react-refresh/only-export-components': 'off',
+    },
+  },
+  // E2E (Playwright) fixtures are not React code — disable React-specific rules
+  {
+    files: ['e2e/**'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'off',
+      'react-hooks/rules-of-hooks': 'off',
+      'no-empty-pattern': 'off',
+    },
+  },
 ])

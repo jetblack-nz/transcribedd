@@ -1,6 +1,6 @@
 # Progress — Transcribedd
 
-_Last updated: 2026-03-15 (session 5)_
+_Last updated: 2026-03-15 (session 6)_
 
 ---
 
@@ -44,8 +44,16 @@ _Last updated: 2026-03-15 (session 5)_
 - ✅ `worker/main.py` — `process_job()` per-stage timeouts, Realtime wakeup + 30s poll fallback, SIGTERM handling
 - ✅ Structured JSON logging via `structlog` with URL sanitisation in logs
 - ✅ Stuck job recovery on startup
-- ✅ 55 pytest tests passing across 5 test files (`test_config`, `test_downloader`, `test_supabase_ops`, `test_transcriber`, `test_main`)
+- ✅ `worker/runpod_ops.py` — `stop_pod()` for always-on mode self-termination
+- ✅ 60 pytest tests passing across 5 test files (`test_config`, `test_downloader`, `test_supabase_ops`, `test_transcriber`, `test_main`)
 - ✅ Architecture documented in `docs/plan/LINUX_WORKER.md`
+
+### RunPod Serverless Integration
+- ✅ `trigger-worker` edge function redesigned — claims stale jobs (>90s) and submits to RunPod Serverless endpoint
+- ✅ `runpod-callback` edge function — receives RunPod webhook, uploads transcript, calls `complete_job`
+- ✅ `20260315000001_pg_cron_runpod_trigger.sql` — `claim_stale_job` RPC + pg_cron schedule (every 60s)
+- ✅ Architecture verified: macOS uses **Metal GPU** + 30s poll; RunPod is overflow/fallback
+- ✅ `LINUX_WORKER.md` updated with final RunPod Serverless architecture
 
 ### Supabase Backend
 - ✅ `jobs` and `profiles` tables with RLS
@@ -58,6 +66,8 @@ _Last updated: 2026-03-15 (session 5)_
 - ✅ Worker token columns removed (`20260314000001`): `worker_token_hash` and related columns dropped from `profiles` — **applied**
 - ✅ `create-worker-token` Edge Function deleted
 - ✅ SSRF protection (`20260315000000`): `episode_url HTTPS CHECK` constraint + frontend validation rejecting private/loopback ranges
+- ✅ `claim_stale_job` RPC (`20260315000001`): claims pending jobs older than N seconds; used by RunPod trigger
+- ✅ pg_cron schedule (`20260315000001`): fires every 60s, calls `trigger-worker` only when stale jobs exist
 
 ### Project Infrastructure
 - ✅ `CLAUDE.md` merged to main (AI assistant conventions, build commands, security rules)
@@ -106,5 +116,6 @@ See `docs/plan/SECURITY_FIXES.md` for full details. Outstanding items:
 - Usage statistics / admin dashboard
 - Speaker diarization
 - macOS app code signing and notarization for distribution
-- Linux worker deployment to node3.gyr.lan (user handles via Nomad/Docker)
+- RunPod Serverless endpoint setup + secrets configured (user action: create endpoint, `supabase secrets set`, set DB params)
+- RunPod migration `20260315000001` applied to live DB (`supabase db push`)
 - macOS worker rebuild + restart after RPC signature change

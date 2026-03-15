@@ -6,6 +6,26 @@
 
 **Before ending every session:** update `docs/PROGRESS.md` to reflect what was completed, what is now in progress, and any new blockers discovered.
 
+## Autonomous Work Protocol
+
+Full bash access is granted. Work autonomously — read files, run tests, run the linter, explore the codebase, fix failures, and iterate without asking for permission.
+
+When given a task, follow this loop without interruption:
+
+1. Read `docs/PROGRESS.md` to understand current state
+2. Write or modify code
+3. Run tests — if failing, fix and repeat from step 2
+4. Run linter — fix any errors
+5. Confirm the task is complete end-to-end
+6. Update `docs/PROGRESS.md`
+7. Propose a commit message — **do not commit unless explicitly told to**
+
+**Hard stops — always pause and ask before:**
+- Anything touching production environment variables
+- Any push to `main` or release branches
+- Any migration or schema change
+- Any command containing `drop`, `delete`, `destroy`, or `prod`
+
 ## Reference Docs
 
 @docs/ARCHITECTURE.md
@@ -16,9 +36,10 @@
 
 ## Never Do This
 
-- **Never run database migrations** without showing the full SQL to the user first and getting explicit approval
-- **Never delete files** — archive or comment out instead; check with the user before any `rm`
-- **Never install packages** without flagging the package name, purpose, and bundle-size impact first
+- **Never commit** — propose a commit message and wait for the user to say so
+- **Never run database migrations** without showing the full SQL first and getting explicit approval
+- **Never delete files** — archive or comment out instead; check before any `rm`
+- **Never install packages** without flagging the name, purpose, and bundle-size impact first
 - **Never modify `.env` files** — show the user what line to add and let them do it
 - **Never put secrets in frontend code** — `SUPABASE_SERVICE_ROLE_KEY`, Podcast Index keys, and Groq keys must stay in Edge Functions or macOS Keychain
 - **Never generate public Storage URLs** for transcripts — always use `get-transcript-url` Edge Function

@@ -19,6 +19,7 @@ export function useJobs(userId: string | undefined) {
   }, [userId])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchJobs()
   }, [fetchJobs])
 

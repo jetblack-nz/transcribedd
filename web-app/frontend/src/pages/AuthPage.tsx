@@ -21,7 +21,7 @@ export function AuthPage() {
       if (error) throw error
       navigate('/')
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : (err as any)?.message ?? 'An error occurred')
+      setError(err instanceof Error ? err.message : (err as { message?: string }).message ?? 'An error occurred')
     } finally {
       setLoading(false)
     }

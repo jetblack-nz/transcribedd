@@ -12,6 +12,7 @@ export function AuthCallbackPage() {
     const params = new URLSearchParams(window.location.search)
     const urlError = params.get('error_description') ?? params.get('error')
     if (urlError) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setError(decodeURIComponent(urlError.replace(/\+/g, ' ')))
       return
     }

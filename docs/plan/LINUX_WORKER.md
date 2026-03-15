@@ -4,28 +4,31 @@
 
 A headless Python daemon that runs in a Docker container with NVIDIA GPU access. It claims transcription jobs from Supabase, downloads audio, transcribes with Whisper (`large-v3`), and uploads results. It is a **drop-in replacement for the macOS worker** — no Supabase schema changes, no new RPC functions, no new storage buckets.
 
-### Deployment Target: RunPod (on-demand pod)
+### Deployment Target: RunPod Serverless
 
-The worker runs on a **RunPod on-demand GPU pod** (RTX 3090, 24 GB VRAM, ~$0.22/hr Community Cloud). The pod is **stopped when idle** and started automatically when a new job arrives — paying only for actual GPU compute time.
+The worker runs on **RunPod Serverless** using the pre-built [`worker-faster_whisper`](https://console.runpod.io/hub/runpod-workers/worker-faster_whisper) Hub endpoint. There is no persistent pod to manage — the endpoint scales to zero when idle and cold-starts on demand.
 
-**Why RunPod, not a dedicated server**: An initial attempt to run on a shared Debian server (node3.gyr.lan, NVIDIA T600, 4 GB VRAM) failed — Immich ML and Scrypted consumed ~3.8 GB of the 4 GB VRAM, leaving insufficient headroom for `large-v3` inference. CPU fallback caused thermal issues. RunPod provides a dedicated 24 GB GPU with no competing workloads.
+**Architecture**: The macOS worker has a 90-second priority window on every new job (it receives Supabase Realtime notifications instantly). If the macOS worker is offline or busy, a pg_cron job fires every 60 seconds, finds jobs pending > 90 seconds, claims them, and submits them to the RunPod Serverless endpoint. RunPod calls back a webhook (`runpod-callback` edge function) with the transcript, which uploads to storage and marks the job complete.
 
-**Cost at 10 jobs/day, 15 min avg**: ~$0.55/day ($16/month). Zero idle cost.
+**Why RunPod Serverless, not an on-demand pod**: An initial attempt to run on a shared Debian server (node3.gyr.lan, NVIDIA T600, 4 GB VRAM) failed — Immich ML and Scrypted consumed ~3.8 GB of the 4 GB VRAM. An on-demand pod approach was then planned, but RunPod has no Start/Stop button (only Reset/Terminate) and pod management via API is unreliable for this use case. RunPod Serverless scales to zero automatically and requires no lifecycle management.
+
+**Cost at 10 jobs/day, 30 min avg with `turbo` model**: ~$0.30/day. Zero idle cost.
 
 ---
 
 ## What Changes vs the Mac App
 
-| Concern | Mac App | Linux Worker |
+| Concern | Mac App | Linux Worker / RunPod |
 |---|---|---|
 | Language | Swift | Python 3.11+ |
-| Transcription | `whisper-cli` subprocess (CPU, `small` model) | `faster-whisper` library (CUDA, `large-v3`) |
+| Transcription | `whisper-cli` subprocess (**Metal GPU**, `ggml-base` by default) | `faster-whisper` library (CUDA, `large-v3`) |
 | Auth | GitHub OAuth (interactive JWT) | `SUPABASE_SERVICE_ROLE_KEY` (env var) |
-| Process management | macOS launchd / user session | RunPod on-demand pod (start/stop via API) |
+| Process management | macOS launchd / user session | RunPod Serverless (scales to zero, no pod management) |
 | UI / notifications | SwiftUI menu bar | None (structured log output only) |
-| Availability | Only when Mac is on | On-demand: starts on job arrival, stops when queue drains |
+| Job discovery | Realtime INSERT → immediate wake; 30s poll fallback | pg_cron triggers after 90s if job still pending |
+| Availability | When Mac is on (priority worker) | Overflow / fallback when macOS is offline |
 
-Everything else — job claiming RPC, storage upload path convention, Realtime subscription pattern, 30s poll fallback — is **identical**.
+Everything else — job claiming RPC, storage upload path convention, `complete_job`/`fail_job` RPC signatures — is **identical**.
 
 ---
 
@@ -39,8 +42,8 @@ Everything else — job claiming RPC, storage upload path convention, Realtime s
 | Audio conversion | `ffmpeg` (system apt package) | Same tool and same command as mac app: `-ar 16000 -ac 1 -c:a pcm_s16le` |
 | Structured logging | `structlog` | JSON log output suitable for log aggregation pipelines |
 | Container runtime | Docker + NVIDIA Container Toolkit | CUDA dependencies handled by `nvidia/cuda` base image |
-| Pod lifecycle | RunPod REST API (`/v1/pods/{id}/stop`) | Worker stops itself via API after queue drains |
-| Pod wakeup | Supabase `trigger-worker` Edge Function | Called by Database Webhook on job INSERT; calls RunPod `/start` |
+| Job routing | pg_cron + `trigger-worker` Edge Function | After 90s, claims stale job and submits to RunPod Serverless |
+| Webhook receiver | `runpod-callback` Edge Function | Receives RunPod result, uploads transcript, calls `complete_job` |
 
 ---
 
@@ -139,49 +142,83 @@ On startup the worker resets any `processing` jobs claimed by its own `worker_id
 
 ---
 
-## RunPod Pod Lifecycle
+## RunPod Serverless Architecture
+
+### End-to-end flow
 
 ```
 User submits job (web app)
-  └── INSERT into jobs table
-        └── Supabase Database Webhook fires
-              └── trigger-worker Edge Function called
-                    └── POST https://rest.runpod.io/v1/pods/{pod_id}/start
-                          └── Pod resumes (~60s cold start)
-                                └── Worker starts, loads large-v3, claims job
-                                      └── Transcribes, uploads, completes job
-                                            └── claim_next_job() → None (empty queue)
-                                                  └── Wait poll_interval seconds
-                                                        └── Still nothing → stop_pod()
-                                                              └── Pod stops, billing stops
+  └── INSERT into jobs table (status = 'pending')
+        └── Supabase Realtime notifies macOS worker instantly
+              └── macOS worker claims job (claim_next_job), transcribes with whisper.cpp + Metal
+                    └── Completes job (complete_job RPC) ← happy path
+
+  [If macOS is offline or takes > 90s]
+
+  └── pg_cron fires every 60s
+        └── trigger_runpod_for_stale_jobs() SQL function
+              └── Checks: any jobs pending > 90s?
+                    └── Yes → POST /functions/v1/trigger-worker
+                          └── trigger-worker edge function:
+                                ├── claim_stale_job('runpod-serverless')
+                                └── POST https://api.runpod.io/v2/{endpoint_id}/run
+                                      └── { input: { audio: episode_url, model: "turbo" },
+                                              webhook: "...runpod-callback?job_id=...&secret=..." }
+
+  RunPod processes audio (~2–5 min for 1hr episode with turbo model)
+    └── POST /functions/v1/runpod-callback?job_id=...&user_id=...&secret=...
+          └── runpod-callback edge function:
+                ├── Verify secret
+                ├── Extract output.transcription
+                ├── Upload to storage: transcripts/{user_id}/{job_id}.txt
+                └── complete_job(job_id, path, 'runpod-serverless') RPC
 ```
-
-### Webhook configuration (Supabase Dashboard)
-
-1. Database → Webhooks → Create new webhook
-2. Table: `jobs`, Event: `INSERT`
-3. Method: `POST`, URL: `https://<project>.supabase.co/functions/v1/trigger-worker`
-4. HTTP Headers: `Authorization: Bearer <anon_key>`
 
 ### Secrets (set via `supabase secrets set`)
 
 ```
 RUNPOD_API_KEY=<runpod api key>
-RUNPOD_POD_ID=<id of the stopped pod>
+RUNPOD_ENDPOINT_ID=<serverless endpoint ID from RunPod console>
+RUNPOD_CALLBACK_URL=https://<project>.supabase.co/functions/v1/runpod-callback
+RUNPOD_CALLBACK_SECRET=<random secret, e.g. openssl rand -hex 32>
 ```
 
-### Pod configuration on RunPod
+### pg_cron setup (run once in Supabase SQL editor)
 
-- GPU: RTX 3090 (24 GB) or RTX A5000 (24 GB) on Community Cloud
-- Docker image: `transcribedd-worker:latest` (built from this repo's `linux-worker/Dockerfile`)
-- Network volume: mount at `/root/.cache/huggingface/` to persist the Whisper model across stops
-- Container start command: `python -m worker.main`
-- Env vars: set from `.env` (fill in `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `WORKER_ID`, `RUNPOD_API_KEY`, `RUNPOD_POD_ID`)
-- `restart: no` — RunPod manages lifecycle; no auto-restart on exit
+After applying migration `20260315000001_pg_cron_runpod_trigger.sql`, set the DB parameters so the cron function can call the edge function:
+
+```sql
+ALTER DATABASE postgres SET app.settings.supabase_url    = 'https://<project-ref>.supabase.co';
+ALTER DATABASE postgres SET app.settings.service_role_key = '<service-role-key>';
+```
+
+Then reconnect (or run `SELECT pg_reload_conf();`) for the settings to take effect.
+
+### RunPod Serverless endpoint setup
+
+1. Go to [RunPod Console → Serverless → New Endpoint](https://console.runpod.io/serverless)
+2. Select Hub worker: `runpod-workers/worker-faster_whisper`
+3. Choose GPU: RTX 3090 or similar (24 GB VRAM)
+4. Set max workers to 1 (or more for concurrent jobs)
+5. Copy the endpoint ID — set as `RUNPOD_ENDPOINT_ID` secret
+
+### Worker model selection
+
+The `worker-faster_whisper` Hub worker accepts a `model` field in `input`:
+
+| Model | Quality | Speed | Notes |
+|---|---|---|---|
+| `turbo` | Near large-v3 | ~8× faster | **Recommended** — best cost/quality |
+| `large-v3` | Highest | Baseline | Use if accuracy is critical |
+| `medium` | Good | ~2× faster | Budget option |
 
 ### Always-on mode (local dev / dedicated server)
 
-Leave `RUNPOD_API_KEY` and `RUNPOD_POD_ID` unset. The worker runs indefinitely, polling every 30 seconds. The trigger-worker edge function is not needed.
+The linux-worker Python daemon is still useful for:
+- Local development with `WHISPER_DEVICE=cpu`
+- A dedicated always-on GPU server (leave `RUNPOD_API_KEY`/`RUNPOD_POD_ID` unset)
+
+In always-on mode, the worker polls every 30 seconds and uses Realtime for instant wake-up. pg_cron and trigger-worker are not needed.
 
 ---
 
