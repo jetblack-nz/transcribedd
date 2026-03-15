@@ -38,6 +38,15 @@ export function useJobs(userId: string | undefined) {
     return () => { supabase.removeChannel(channel) }
   }, [userId, fetchJobs])
 
+  const deleteJob = async (jobId: string) => {
+    setJobs((prev) => prev.filter((j) => j.id !== jobId))
+    const { error } = await supabase.from('jobs').delete().eq('id', jobId)
+    if (error) {
+      await fetchJobs()
+      throw error
+    }
+  }
+
   const createJob = async (job: {
     podcast_title: string
     episode_title: string
@@ -57,5 +66,5 @@ export function useJobs(userId: string | undefined) {
     return data as Job
   }
 
-  return { jobs, loading, error, createJob, refetch: fetchJobs }
+  return { jobs, loading, error, createJob, deleteJob, refetch: fetchJobs }
 }

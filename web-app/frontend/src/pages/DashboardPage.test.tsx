@@ -210,7 +210,7 @@ describe('DashboardPage', () => {
     render(<DashboardPage />)
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Download (text)' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Job options' })).toBeInTheDocument()
     })
 
     const originalCreateElement = document.createElement.bind(document)
@@ -220,20 +220,24 @@ describe('DashboardPage', () => {
       return originalCreateElement(tag)
     })
 
-    await user.click(screen.getByRole('button', { name: 'Download (text)' }))
+    try {
+      await user.click(screen.getByRole('button', { name: 'Job options' }))
+      await user.click(screen.getByRole('button', { name: 'Download (text)' }))
 
-    await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/functions/v1/get-transcript-url'),
-        expect.objectContaining({
-          method: 'POST',
-          headers: expect.objectContaining({
-            Authorization: 'Bearer mock-token',
-          }),
-        })
-      )
-    })
-    document.createElement = originalCreateElement
+      await waitFor(() => {
+        expect(global.fetch).toHaveBeenCalledWith(
+          expect.stringContaining('/functions/v1/get-transcript-url'),
+          expect.objectContaining({
+            method: 'POST',
+            headers: expect.objectContaining({
+              Authorization: 'Bearer mock-token',
+            }),
+          })
+        )
+      })
+    } finally {
+      document.createElement = originalCreateElement
+    }
   })
 
   // --- Prompt section ---
@@ -371,20 +375,23 @@ describe('DashboardPage', () => {
       return originalCreateElement(tag)
     })
 
-    await waitFor(() => screen.getByRole('button', { name: 'Download (docx)' }))
-    await user.click(screen.getByRole('button', { name: 'Download (docx)' }))
+    try {
+      await waitFor(() => screen.getByRole('button', { name: 'Job options' }))
+      await user.click(screen.getByRole('button', { name: 'Job options' }))
+      await user.click(screen.getByRole('button', { name: 'Download (docx)' }))
 
-    await waitFor(() =>
-      expect(global.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/functions/v1/process-transcript'),
-        expect.objectContaining({
-          method: 'POST',
-          headers: expect.objectContaining({ Authorization: 'Bearer mock-token' }),
-        }),
+      await waitFor(() =>
+        expect(global.fetch).toHaveBeenCalledWith(
+          expect.stringContaining('/functions/v1/process-transcript'),
+          expect.objectContaining({
+            method: 'POST',
+            headers: expect.objectContaining({ Authorization: 'Bearer mock-token' }),
+          }),
+        )
       )
-    )
-
-    document.createElement = originalCreateElement
+    } finally {
+      document.createElement = originalCreateElement
+    }
   })
 
   it('disables the Download (docx) button when the prompt textarea is empty', async () => {
@@ -394,11 +401,12 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />)
 
-    await waitFor(() => screen.getByRole('button', { name: 'Download (docx)' }))
+    await waitFor(() => screen.getByRole('button', { name: 'Job options' }))
 
     const textarea = screen.getByRole('textbox')
     await user.clear(textarea)
 
+    await user.click(screen.getByRole('button', { name: 'Job options' }))
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Download (docx)' })).toBeDisabled()
     )
@@ -415,7 +423,8 @@ describe('DashboardPage', () => {
     const user = userEvent.setup()
     render(<DashboardPage />)
 
-    await waitFor(() => screen.getByRole('button', { name: 'Download (text)' }))
+    await waitFor(() => screen.getByRole('button', { name: 'Job options' }))
+    await user.click(screen.getByRole('button', { name: 'Job options' }))
     await user.click(screen.getByRole('button', { name: 'Download (text)' }))
 
     await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining('Not authenticated')))
@@ -438,7 +447,8 @@ describe('DashboardPage', () => {
     const user = userEvent.setup()
     render(<DashboardPage />)
 
-    await waitFor(() => screen.getByRole('button', { name: 'Download (text)' }))
+    await waitFor(() => screen.getByRole('button', { name: 'Job options' }))
+    await user.click(screen.getByRole('button', { name: 'Job options' }))
     await user.click(screen.getByRole('button', { name: 'Download (text)' }))
 
     await waitFor(() => expect(alertSpy).toHaveBeenCalled())

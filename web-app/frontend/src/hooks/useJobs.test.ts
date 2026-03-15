@@ -4,15 +4,16 @@ import { useJobs } from './useJobs'
 import { createMockJobs, createMockJob } from '../test/mocks/data'
 
 // Use vi.hoisted() to declare mocks that will be available in the factory
-const { mockSelect, mockInsert, mockEq, mockOrder, mockFrom, mockChannel, mockSupabaseFrom, mockRemoveChannel } = vi.hoisted(() => {
+const { mockSelect, mockInsert, mockEq, mockOrder, mockFrom, mockChannel, mockSupabaseFrom, mockRemoveChannel, mockDelete } = vi.hoisted(() => {
   const mockSelect = vi.fn()
   const mockInsert = vi.fn()
+  const mockDelete = vi.fn()
   const mockEq = vi.fn()
   const mockOrder = vi.fn()
   const mockFrom = vi.fn()
   const mockChannel = vi.fn()
   const mockRemoveChannel = vi.fn()
-  return { mockSelect, mockInsert, mockEq, mockOrder, mockFrom, mockChannel, mockSupabaseFrom: mockFrom, mockRemoveChannel }
+  return { mockSelect, mockInsert, mockDelete, mockEq, mockOrder, mockFrom, mockChannel, mockSupabaseFrom: mockFrom, mockRemoveChannel }
 })
 
 vi.mock('../lib/supabase', () => ({
@@ -338,6 +339,67 @@ describe('useJobs', () => {
         podcast_title: 'P', episode_title: 'E',
         episode_url: 'https://cdn.example.com/episode.mp3',
       })).resolves.toBeDefined()
+    })
+  })
+
+  describe('deleteJob', () => {
+    function setupFetch(jobs = createMockJobs(2)) {
+      mockSupabaseFrom.mockReturnValue({
+        select: vi.fn(() => ({ order: vi.fn(() => Promise.resolve({ data: jobs, error: null })) })),
+      })
+      return jobs
+    }
+
+    it('optimistically removes the job from state', async () => {
+      const jobs = setupFetch()
+      const { result } = renderHook(() => useJobs('user-123'))
+      await waitFor(() => expect(result.current.loading).toBe(false))
+
+      mockSupabaseFrom.mockReturnValueOnce({
+        delete: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ error: null })) })),
+      })
+
+      await result.current.deleteJob(jobs[0].id)
+
+      await waitFor(() => {
+        expect(result.current.jobs).not.toContainEqual(expect.objectContaining({ id: jobs[0].id }))
+      })
+    })
+
+    it('calls supabase delete with the correct job id', async () => {
+      const jobs = setupFetch()
+      const { result } = renderHook(() => useJobs('user-123'))
+      await waitFor(() => expect(result.current.loading).toBe(false))
+
+      const eqMock = vi.fn(() => Promise.resolve({ error: null }))
+      mockSupabaseFrom.mockReturnValueOnce({
+        delete: vi.fn(() => ({ eq: eqMock })),
+      })
+
+      await result.current.deleteJob(jobs[0].id)
+
+      expect(eqMock).toHaveBeenCalledWith('id', jobs[0].id)
+    })
+
+    it('reverts the optimistic removal and re-fetches when delete fails', async () => {
+      const jobs = setupFetch()
+      const { result } = renderHook(() => useJobs('user-123'))
+      await waitFor(() => expect(result.current.loading).toBe(false))
+
+      // First mockReturnValueOnce for the delete call (fails)
+      mockSupabaseFrom.mockReturnValueOnce({
+        delete: vi.fn(() => ({ eq: vi.fn(() => Promise.resolve({ error: { message: 'Delete failed' } })) })),
+      })
+      // Second mockReturnValueOnce for the re-fetch after failure
+      mockSupabaseFrom.mockReturnValueOnce({
+        select: vi.fn(() => ({ order: vi.fn(() => Promise.resolve({ data: jobs, error: null })) })),
+      })
+
+      await expect(result.current.deleteJob(jobs[0].id)).rejects.toMatchObject({ message: 'Delete failed' })
+
+      await waitFor(() => {
+        expect(result.current.jobs).toHaveLength(jobs.length)
+      })
     })
   })
 

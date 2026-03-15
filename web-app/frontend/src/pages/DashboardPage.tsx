@@ -42,7 +42,7 @@ Apply the following formatting rules:
 
 export function DashboardPage() {
   const { user } = useAuth()
-  const { jobs, loading, error } = useJobs(user?.id)
+  const { jobs, loading, error, deleteJob } = useJobs(user?.id)
 
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT)
   const [promptLoading, setPromptLoading] = useState(true)
@@ -204,7 +204,7 @@ export function DashboardPage() {
       ) : (
         <div className="space-y-3">
           {jobs.map((job) => (
-            <JobCard key={job.id} job={job} onDownload={handleDownload} onDownloadDeluxe={handleDownloadDeluxe} hasPrompt={!!prompt.trim()} />
+            <JobCard key={job.id} job={job} onDownload={handleDownload} onDownloadDeluxe={handleDownloadDeluxe} onDelete={(j) => deleteJob(j.id)} hasPrompt={!!prompt.trim()} />
           ))}
         </div>
       )}
