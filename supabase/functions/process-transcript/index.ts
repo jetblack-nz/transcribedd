@@ -170,12 +170,17 @@ serve(async (req) => {
     const chunks = splitIntoChunks(transcript, MAX_CHUNK_CHARS)
     const processedChunks: string[] = []
 
-    for (const chunk of chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      // Continuation chunks: suppress re-adding a title or intro heading
+      const userContent = i === 0
+        ? chunks[i]
+        : `Continue formatting the transcript. Do not add a title, document heading, or any introductory text — pick up exactly where the previous section ended.\n\n${chunks[i]}`
+
       const result = await groqChatWithRetry(groqKey, {
         model: GROQ_MODEL,
         messages: [
           { role: 'system', content: processingPrompt },
-          { role: 'user', content: chunk },
+          { role: 'user', content: userContent },
         ],
         temperature: 0.3,
         max_tokens: 2048,

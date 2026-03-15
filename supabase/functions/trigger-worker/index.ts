@@ -68,7 +68,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   // Submit async job with webhook so RunPod calls us back when done
   const webhook = `${callbackUrl}?job_id=${job.id}&user_id=${job.user_id}&secret=${callbackSecret}`
-  const runpodUrl = `https://api.runpod.io/v2/${endpointId}/run`
+  const runpodUrl = `https://api.runpod.ai/v2/${endpointId}/run`
 
   try {
     const resp = await fetch(runpodUrl, {

@@ -7,7 +7,23 @@ import { JobCard } from '../components/JobCard'
 import { supabase } from '../lib/supabase'
 import type { Job } from '../types'
 
-// Parses markdown-style headings and paragraphs into a Word document
+/** Split a line on **bold** and *italic* markers into TextRuns. */
+function parseInline(text: string): TextRun[] {
+  const runs: TextRun[] = []
+  const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/)
+  for (const part of parts) {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      runs.push(new TextRun({ text: part.slice(2, -2), bold: true }))
+    } else if (part.startsWith('*') && part.endsWith('*')) {
+      runs.push(new TextRun({ text: part.slice(1, -1), italics: true }))
+    } else if (part) {
+      runs.push(new TextRun(part))
+    }
+  }
+  return runs.length ? runs : [new TextRun('')]
+}
+
+// Parses markdown (headings, bullets, bold/italic) into a Word document
 async function buildDocx(text: string): Promise<Blob> {
   const lines = text.split('\n')
   const children: Paragraph[] = []
@@ -21,8 +37,16 @@ async function buildDocx(text: string): Promise<Blob> {
       children.push(new Paragraph({ text: line.slice(2).trim(), heading: HeadingLevel.HEADING_1 }))
     } else if (line.trim() === '') {
       children.push(new Paragraph({ children: [new TextRun('')] }))
+    } else if (line.startsWith('* ') || line.startsWith('- ')) {
+      children.push(new Paragraph({ children: parseInline(line.slice(2).trim()), bullet: { level: 0 } }))
     } else {
-      children.push(new Paragraph({ children: [new TextRun(line)] }))
+      // Lines like **Heading:** — treat as Heading 2; otherwise paragraph with inline formatting
+      const boldLine = line.match(/^\*\*(.+?)\*\*:?\s*$/)
+      if (boldLine) {
+        children.push(new Paragraph({ text: boldLine[1], heading: HeadingLevel.HEADING_2 }))
+      } else {
+        children.push(new Paragraph({ children: parseInline(line) }))
+      }
     }
   }
 
@@ -106,7 +130,6 @@ export function DashboardPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       alert(`Download failed: ${msg}`)
-      throw err
     }
   }
 
@@ -143,7 +166,6 @@ export function DashboardPage() {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       alert(`Download (docx) failed: ${msg}`)
-      throw err
     }
   }
 
