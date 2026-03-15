@@ -1,0 +1,12 @@
+# Downloaded AAX files
+downloads/
+output/
+*.aax
+*.aaxc
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
