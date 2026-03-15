@@ -6,15 +6,17 @@
  * or calls fail_job if RunPod reports an error.
  *
  * URL query params (appended by trigger-worker):
- *   job_id  — Supabase jobs.id (UUID)
- *   user_id — jobs.user_id
- *   secret  — must match RUNPOD_CALLBACK_SECRET env var
+ *   job_id — Supabase jobs.id (UUID)
+ *   sig    — HMAC-SHA256(RUNPOD_CALLBACK_SECRET, job_id) — no raw secret in URL (H-3)
+ *
+ * user_id is derived server-side from the job row, never trusted from the caller (H-4).
  *
  * RunPod webhook payload shape:
  *   { id, status: "COMPLETED"|"FAILED"|"CANCELLED"|"IN_PROGRESS", output: { transcription: "..." }, error?: "..." }
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { verifyHmac } from './hmac.ts'
 
 const RUNPOD_WORKER_ID = 'runpod-serverless'
 
@@ -23,25 +25,41 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return new Response('Method not allowed', { status: 405 })
   }
 
-  const url    = new URL(req.url)
-  const jobId  = url.searchParams.get('job_id')
-  const userId = url.searchParams.get('user_id')
-  const secret = url.searchParams.get('secret')
+  const url   = new URL(req.url)
+  const jobId = url.searchParams.get('job_id')
+  const sig   = url.searchParams.get('sig')
 
-  if (!secret || secret !== Deno.env.get('RUNPOD_CALLBACK_SECRET')) {
+  if (!jobId) {
+    return new Response('Missing job_id', { status: 400 })
+  }
+
+  // H-3: validate HMAC signature — raw secret never appears in the URL
+  const callbackSecret = Deno.env.get('RUNPOD_CALLBACK_SECRET') ?? ''
+  if (!sig || !(await verifyHmac(callbackSecret, jobId, sig))) {
     return new Response('Unauthorized', { status: 401 })
   }
-  if (!jobId || !userId) {
-    return new Response('Missing job_id or user_id', { status: 400 })
-  }
-
-  const payload = await req.json()
-  const status  = payload.status as string
 
   const admin = createClient(
     Deno.env.get('SUPABASE_URL') ?? '',
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
   )
+
+  // H-4: derive user_id server-side from the job row — never trust caller-supplied value
+  const { data: jobRow, error: jobError } = await admin
+    .from('jobs')
+    .select('user_id')
+    .eq('id', jobId)
+    .single()
+
+  if (jobError || !jobRow) {
+    console.error(`runpod-callback: job ${jobId} not found`, jobError)
+    return new Response('Job not found', { status: 404 })
+  }
+
+  const userId = jobRow.user_id as string
+
+  const payload = await req.json()
+  const status  = payload.status as string
 
   // Non-terminal status (e.g. IN_PROGRESS) — acknowledge and ignore
   if (status !== 'COMPLETED' && status !== 'FAILED' && status !== 'CANCELLED') {
@@ -71,7 +89,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return new Response(JSON.stringify({ ok: true }), { status: 200 })
   }
 
-  // Upload transcript to private storage bucket
+  // Upload transcript to private storage bucket using server-side userId
   const storagePath = `${userId}/${jobId}.txt`
   const { error: uploadError } = await admin.storage
     .from('transcripts')
@@ -99,9 +117,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   if (completeError) {
     console.error(`runpod-callback: complete_job failed for job ${jobId}`, completeError)
-    // Best-effort cleanup — don't leave orphaned transcript
     await admin.storage.from('transcripts').remove([storagePath]).catch(() => {})
-    return new Response(JSON.stringify({ error: completeError.message }), { status: 500 })
+    return new Response(JSON.stringify({ error: 'Internal server error' }), { status: 500 })
   }
 
   console.log(`runpod-callback: job ${jobId} completed successfully`)

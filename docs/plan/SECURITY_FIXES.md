@@ -1,239 +1,163 @@
 # Security Fix Plan
 
-Findings from a penetration-test of the MVP (10 March 2026).
-Issues are ordered by severity. Each entry lists the exact file(s) to change and the fix.
+Findings from security reviews (latest refresh: 2026-03-15).
+Issues are ordered by severity and mapped to concrete files.
 
 ---
 
 ## Status legend
 - ✅ Fixed — in `main`
-- 🔧 Fix ready — local edits not yet deployed
 - ❌ Not started
+- ⚠️ Verify in environment — cannot be confirmed from repo alone
 
 ---
 
 ## Critical
 
-### C-1 — Sign-up is not enforced as invite-only ❌
-**Risk:** Anyone can create an account directly via the Supabase API even though the UI says
-"Access by invitation only". A full anon key + project URL is enough to call
-`supabase.auth.signUp()` from any browser console.
+### C-1 — Sign-up may still be open despite "invitation only" copy ⚠️
+**Risk:** `AuthPage` says "Access by invitation only", but the client still exposes
+`supabase.auth.signUp(...)`. If Supabase Auth "Enable Signups" is ON, anyone can create an
+account directly via API.
 
-**Fix (Supabase Dashboard — no code change needed):**
-1. Supabase Dashboard → Project → Authentication → Settings.
-2. Toggle **"Enable Signups"** OFF.
-3. Use *Invite user* (Auth → Users → Invite) to add allowed addresses, or switch to
-   email-allowlist if the feature is available on your plan.
+**Evidence:**
+- `web-app/frontend/src/pages/AuthPage.tsx`
+- `web-app/frontend/src/hooks/useAuth.ts`
+
+**Fix (Supabase Dashboard):**
+1. Authentication → Settings.
+2. Toggle **Enable Signups** OFF.
+3. Use invite flow / allowlist as needed.
 
 ---
 
 ## High
 
-### H-1 — Any authenticated user can manipulate any job via RPCs ❌
-**Risk:** `claim_next_job`, `complete_job`, and `fail_job` are `SECURITY DEFINER` functions
-that bypass RLS entirely. Any signed-in user who knows the Supabase URL and their own JWT can
-call these RPCs directly and steal, complete, or fail jobs belonging to other users.
-`complete_job` is especially dangerous — it accepts an arbitrary `transcript_path`, allowing a
-malicious user to point any completed job at a file they control.
+### H-1 — Worker RPC privilege bypass via authenticated users ✅
+**Status update:** Fixed in `main`.
 
-**Files to change:**
-- `supabase/migrations/<new>_rpc_worker_auth.sql` (new migration)
-- `supabase/functions/create-worker-token/index.ts` (no change needed)
+**What was fixed:**
+- `SET search_path = public` on worker RPCs
+- `worker_id` ownership check on `complete_job`/`fail_job`
+- `REVOKE EXECUTE ... FROM PUBLIC`, `GRANT ... TO authenticated`
 
-**Fix:** Add an `is_worker` boolean flag to `profiles` and gate all three RPCs on it:
+**Evidence:**
+- `supabase/migrations/20260314000000_harden_worker_rpcs.sql`
 
-```sql
--- Migration: YYYYMMDDHHMMSS_rpc_worker_auth.sql
+### H-2 — SSRF via `episode_url` ✅
+**Status update:** Fixed in `main`.
 
-ALTER TABLE profiles ADD COLUMN IF NOT EXISTS is_worker BOOLEAN NOT NULL DEFAULT false;
+**What was fixed:**
+- Frontend URL validation rejects non-HTTPS and private/loopback ranges
+- DB constraint enforces `episode_url LIKE 'https://%'`
 
-CREATE OR REPLACE FUNCTION claim_next_job(p_worker_id TEXT)
-RETURNS SETOF jobs
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE v_job jobs;
-BEGIN
-  -- Caller must be a registered worker
-  IF NOT EXISTS (
-    SELECT 1 FROM profiles WHERE id = auth.uid() AND is_worker = true
-  ) THEN
-    RAISE EXCEPTION 'Forbidden';
-  END IF;
+**Evidence:**
+- `web-app/frontend/src/hooks/useJobs.ts`
+- `supabase/migrations/20260315000000_episode_url_https_constraint.sql`
 
-  UPDATE jobs j
-  SET status = 'processing', worker_id = p_worker_id, started_at = NOW()
-  WHERE j.id = (
-    SELECT id FROM jobs WHERE status = 'pending'
-    ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1
-  )
-  RETURNING * INTO v_job;
+### H-3 — RunPod callback secret in query string ✅
+**Status update:** Fixed in `main`.
 
-  IF v_job.id IS NOT NULL THEN RETURN NEXT v_job; END IF;
-END;
-$$;
+**What was fixed:**
+- `trigger-worker` now computes `sig = HMAC-SHA256(RUNPOD_CALLBACK_SECRET, job_id)` and appends `?sig=` to the webhook URL — raw secret never appears in the URL
+- `runpod-callback` validates the HMAC signature using `crypto.subtle.verify` (constant-time)
+- Shared `hmac.ts` module contains `computeHmac` / `verifyHmac` helpers, covered by 8 unit tests
 
--- Apply the same SECURITY guard to complete_job and fail_job (same pattern)
-```
+**Evidence:**
+- `supabase/functions/runpod-callback/hmac.ts`
+- `supabase/functions/runpod-callback/index.ts`
+- `supabase/functions/runpod-callback/index.test.ts`
+- `supabase/functions/trigger-worker/index.ts`
 
-Then set `is_worker = true` for your own profile row once (via Dashboard SQL editor), and
-update `create-worker-token` to also set it when issuing a token.
+### H-4 — `runpod-callback` trusts `user_id` from request query ✅
+**Status update:** Fixed in `main`.
 
-### H-2 — SSRF via `episode_url` ❌
-**Risk:** The macOS worker fetches `jobs.episode_url` unconditionally with `URLSession`. A
-logged-in user can create a job whose `episode_url` points to an internal address
-(`http://169.254.169.254/...`, `http://localhost/...`, or any private subnet resource
-reachable from the worker machine) and the worker will request it.
+**What was fixed:**
+- `user_id` removed from webhook URL entirely — caller can no longer supply it
+- `runpod-callback` fetches the job row by `job_id` via admin client and derives `user_id` from the DB
+- Returns 404 if job row not found
 
-**Files to change:**
-- `web-app/frontend/src/hooks/useJobs.ts` — validate before calling `.insert()`
-- Optional: `supabase/migrations/<new>_episode_url_check.sql` — DB-level constraint as defence-in-depth
-
-**Fix (frontend `createJob`):**
-```typescript
-// In useJobs.ts createJob(), before the supabase.from('jobs').insert(...)
-const parsed = (() => { try { return new URL(job.episode_url ?? '') } catch { return null } })()
-if (!parsed || parsed.protocol !== 'https:' || /^(localhost|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(parsed.hostname)) {
-  throw new Error('Invalid episode URL — must be a public HTTPS address')
-}
-```
-
-**Fix (DB constraint):**
-```sql
-ALTER TABLE jobs ADD CONSTRAINT episode_url_https
-  CHECK (episode_url LIKE 'https://%');
-```
+**Evidence:**
+- `supabase/functions/runpod-callback/index.ts`
+- `supabase/functions/runpod-callback/index.test.ts`
 
 ---
 
 ## Medium
 
-### M-1 — Missing HTTP security headers ❌
-**Risk:** No `Content-Security-Policy`, no `X-Frame-Options`, no `X-Content-Type-Options`.
-The app is vulnerable to clickjacking and MIME-sniffing attacks.
+### M-1 — Missing HTTP security headers on web app ❌
+**Risk:** No CSP, no clickjacking protection, no MIME sniff protection.
 
-**File to change:** `web-app/frontend/public/staticwebapp.config.json`
+**Evidence:**
+- `web-app/frontend/public/staticwebapp.config.json`
 
-**Fix:**
-```json
-{
-  "navigationFallback": {
-    "rewrite": "/index.html",
-    "exclude": ["/assets/*", "/*.{css,js,ico,png,svg,woff2}"]
-  },
-  "globalHeaders": {
-    "X-Frame-Options": "DENY",
-    "X-Content-Type-Options": "nosniff",
-    "Referrer-Policy": "strict-origin-when-cross-origin",
-    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
-    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://itunes.apple.com; frame-ancestors 'none'"
-  }
-}
-```
+**Fix:** Add `globalHeaders` with at least:
+- `X-Frame-Options: DENY`
+- `X-Content-Type-Options: nosniff`
+- `Referrer-Policy: strict-origin-when-cross-origin`
+- `Content-Security-Policy` tuned for Vite + Supabase endpoints
 
-> Note: `'unsafe-inline'` is needed because Vite injects inline styles/scripts. Can be
-> tightened with a nonce-based policy later.
+### M-2 — `complete_job` / `fail_job` missing `SET search_path` ✅
+**Status update:** Fixed in `main`.
 
-### M-2 — `complete_job` and `fail_job` missing `SET search_path` ❌
-**Risk:** PostgreSQL search path injection — a superuser or malicious extension could shadow
-`public.jobs` via a schema earlier in the search path. Low exploitability in practice on
-Supabase, but it's a hardening best practice and is already applied to `handle_new_user`.
+**Evidence:**
+- `supabase/migrations/20260314000000_harden_worker_rpcs.sql`
 
-**File to change:** `supabase/migrations/<new>_rpc_search_path.sql`
+### M-3 — No server-side job creation rate limit ❌
+**Risk:** Authenticated user can spam `jobs` inserts and burn queue/worker cost.
 
-**Fix:**
-```sql
--- Can be combined with H-1 migration above
-CREATE OR REPLACE FUNCTION complete_job(p_job_id UUID, p_transcript_path TEXT)
-  ... (same body)
-  SECURITY DEFINER
-  SET search_path = public  -- add this line
-AS $$ ... $$;
+**Evidence:**
+- `web-app/frontend/src/hooks/useJobs.ts`
+- `supabase/migrations/` (no rate-limit trigger/function present)
 
-CREATE OR REPLACE FUNCTION fail_job(p_job_id UUID, p_error_message TEXT)
-  ...
-  SET search_path = public
-AS $$ ... $$;
-```
+**Fix:** Add DB-side guard (trigger or policy) to cap active jobs per user.
 
-### M-3 — No job creation rate limit ❌
-**Risk:** A signed-in user can spam the `POST /jobs` endpoint (or call
-`supabase.from('jobs').insert(...)` in a loop) to queue unlimited jobs, burning worker
-compute and Supabase row-insert quota.
+### M-4 — Edge functions leak raw internal errors ❌
+**Risk:** Multiple edge functions return raw `error.message` to clients on 500 paths.
 
-**File to change:** `supabase/migrations/<new>_job_rate_limit.sql`
+**Evidence:**
+- `supabase/functions/get-transcript-url/index.ts`
+- `supabase/functions/process-transcript/index.ts`
+- `supabase/functions/trigger-worker/index.ts`
+- `supabase/functions/runpod-callback/index.ts`
 
-**Fix:** DB-level guard via a trigger or RLS check:
-```sql
-CREATE OR REPLACE FUNCTION check_job_rate_limit()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
-BEGIN
-  IF (
-    SELECT COUNT(*) FROM jobs
-    WHERE user_id = NEW.user_id
-      AND status IN ('pending', 'processing')
-  ) >= 5 THEN
-    RAISE EXCEPTION 'Rate limit: max 5 active jobs at a time';
-  END IF;
-  RETURN NEW;
-END;
-$$;
+**Fix:** Return generic `{"error":"Internal server error"}` for 500s; keep detail in server logs only.
 
-CREATE TRIGGER enforce_job_rate_limit
-  BEFORE INSERT ON jobs
-  FOR EACH ROW EXECUTE FUNCTION check_job_rate_limit();
-```
+### M-5 — `audio-files` upload policy is over-broad ❌
+**Risk:** Any authenticated user can upload arbitrary objects into `audio-files` bucket because
+policy only checks `bucket_id = 'audio-files'`.
 
-### M-4 — `get-transcript-url` leaks raw error message 🔧
-**Risk:** An unexpected Supabase storage error in the catch block is returned verbatim to the
-client, potentially exposing internal paths, bucket names, or query structure.
+**Evidence:**
+- `supabase/migrations/20260310000000_initial.sql`
 
-**File to change:** `supabase/functions/get-transcript-url/index.ts`
-
-**Fix:** Replace the final `catch` block (same pattern already applied to the other two functions):
-```typescript
-// Replace:
-} catch (err: unknown) {
-  const message = err instanceof Error ? err.message : String(err)
-  return new Response(
-    JSON.stringify({ error: message }),
-    ...
-  )
-}
-
-// With:
-} catch {
-  return new Response(
-    JSON.stringify({ error: 'Internal server error' }),
-    { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
-  )
-}
-```
+**Fix:** Restrict insert path to user-scoped folder (or remove if bucket is not required).
 
 ---
 
 ## Low / Informational (backlog)
 
-### L-1 — `supabaseAnonKey` stored in `UserDefaults` on macOS ❌
-The anon key is placed in `UserDefaults` (a plain plist on disk) in `AppSettings.swift`.
-While the anon key is nominally public, defence-in-depth suggests it should live in Keychain
-alongside the worker token.  
-**File:** `mac-app/TranscribeddWorker/Settings/AppSettings.swift` — use `KeychainHelper`
-for `supabaseAnonKey` and `supabaseURL`.
+### L-1 — `supabaseAnonKey` in `UserDefaults` on macOS ❌
+**Risk:** Stored in plaintext prefs (low risk because anon key is public, but not ideal).
 
-### L-2 — Realtime subscription receives all job inserts ❌
-`AppState.swift` subscribes to all INSERT events on `jobs` without a `user_id` filter.
-Each worker sees metadata about every new job across all users (though it can only claim one).
-**Fix:** Add `filter: "user_id=eq.\(userId)"` to the `postgresChange` subscription options,
-matching the same filter used in the web app's `useJobs` hook.
+**Evidence:**
+- `mac-app/TranscribeddWorker/Settings/AppSettings.swift`
 
-### L-3 — Worker token exists but is never verified ❌
-`create-worker-token` generates and stores a `worker_token_hash`, but the mac app authenticates
-via GitHub/Google OAuth and never presents this token when calling RPCs. The token does nothing
-today. This creates a false sense of security for anyone reading the UI.  
-**Options:** Either wire it up (see H-1 above) or remove the token UI and the
-`create-worker-token` function until H-1 is implemented.
+**Fix:** Move to `KeychainHelper` for consistency with sensitive app settings.
+
+### L-2 — macOS realtime subscription may receive broad job events ❌
+**Risk:** If subscription is unfiltered, worker sees metadata for all job inserts.
+
+**Evidence:**
+- `mac-app/TranscribeddWorker/AppState.swift`
+
+**Fix:** Add user/job scoping filter where feasible.
+
+### L-3 — OAuth callback logs URL query params to browser console ❌
+**Risk:** Debug logs can include OAuth callback query parameters in browser console telemetry.
+
+**Evidence:**
+- `web-app/frontend/src/pages/AuthCallbackPage.tsx`
+
+**Fix:** Remove/guard verbose callback logging in production.
 
 ---
 
@@ -241,12 +165,12 @@ today. This creates a false sense of security for anyone reading the UI.
 
 | Priority | Item | Effort | Type |
 |---|---|---|---|
-| 1 | C-1 Sign-up toggle | 2 min | Dashboard |
-| 2 | M-4 Error leak in `get-transcript-url` | 5 min | Code + deploy |
-| 3 | M-1 Security headers | 10 min | Config + deploy |
-| 4 | M-2 + M-3 SQL search_path + rate limit | 20 min | Migration |
-| 5 | H-1 RPC worker auth | 1 h | Migration + code |
-| 6 | H-2 SSRF URL validation | 30 min | Code + deploy |
-| 7 | L-1 Keychain for anonKey | 30 min | Swift |
-| 8 | L-2 Realtime filter | 10 min | Swift |
-| 9 | L-3 Wire up / remove worker token | tbd | Code |
+| 1 | C-1 Verify/disable open signups | 2 min | Dashboard |
+| 2 | ~~H-3 Remove callback secret from query string~~ | ✅ done | Edge Function |
+| 3 | ~~H-4 Derive `user_id` from job row in callback~~ | ✅ done | Edge Function |
+| 4 | M-4 Sanitize all edge-function 500 errors | 20 min | Edge Functions |
+| 5 | M-1 Add HTTP security headers | 15 min | Frontend config |
+| 6 | M-3 Add DB job rate limit | 30 min | Migration |
+| 7 | M-5 Tighten `audio-files` upload policy | 20 min | Migration |
+| 8 | L-3 Remove OAuth callback debug logging | 10 min | Frontend |
+| 9 | L-1/L-2 macOS hardening backlog | 30-60 min | Swift |

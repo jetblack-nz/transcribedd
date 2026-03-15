@@ -18,6 +18,7 @@
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { computeHmac } from '../runpod-callback/hmac.ts'
 
 const RUNPOD_WORKER_ID = 'runpod-serverless'
 const STALE_SECONDS = 90
@@ -66,8 +67,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   console.log(`trigger-worker: submitting job ${job.id} to RunPod endpoint ${endpointId}`)
 
-  // Submit async job with webhook so RunPod calls us back when done
-  const webhook = `${callbackUrl}?job_id=${job.id}&user_id=${job.user_id}&secret=${callbackSecret}`
+  // H-3: sign the webhook URL with HMAC so the raw secret never appears in the URL.
+  // H-4: user_id is derived server-side in runpod-callback — not passed here.
+  const sig = await computeHmac(callbackSecret, job.id)
+  const webhook = `${callbackUrl}?job_id=${job.id}&sig=${sig}`
   const runpodUrl = `https://api.runpod.ai/v2/${endpointId}/run`
 
   try {
