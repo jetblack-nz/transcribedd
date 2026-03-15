@@ -203,6 +203,6 @@ SUPABASE_SERVICE_ROLE_KEY   # only for trusted Edge Functions
 
 > **IMPORTANT — deploy ALL parts of a change, not just the frontend.**
 > Pushing to `main` only deploys the frontend automatically. Edge function and DB changes require manual steps:
-> - Edge functions: `supabase functions deploy <name>` (workaround: `mv .env.local .env.local.bak && supabase functions deploy <name>; mv .env.local.bak .env.local`)
+> - Edge functions: **always deploy with `--no-verify-jwt`** — this project's Supabase instance uses a separate Auth signing key for user JWTs that the gateway doesn't recognise; functions handle JWT validation internally via `userClient.auth.getUser()`. Command: `mv .env.local .env.local.bak && supabase functions deploy <name> --no-verify-jwt; mv .env.local.bak .env.local`
 > - DB migrations: `supabase db push` (same `.env.local` workaround)
 > - If you changed an edge function, always redeploy it — committed ≠ deployed.
