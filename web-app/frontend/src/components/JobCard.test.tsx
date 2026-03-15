@@ -66,25 +66,33 @@ describe('JobCard', () => {
     expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
   })
 
-  it('should display download options in menu for completed jobs', async () => {
+  it('shows Download (docx) button directly on card for completed jobs', () => {
+    render(<JobCard job={createMockJob({ status: 'completed' })} {...defaultProps} />)
+    expect(screen.getByRole('button', { name: 'Download (docx)' })).toBeInTheDocument()
+  })
+
+  it('does not show Download (docx) button for non-completed jobs', () => {
+    render(<JobCard job={createMockJob({ status: 'pending' })} {...defaultProps} />)
+    expect(screen.queryByRole('button', { name: 'Download (docx)' })).not.toBeInTheDocument()
+  })
+
+  it('shows Download (text) in menu for completed jobs', async () => {
     const user = userEvent.setup()
     render(<JobCard job={createMockJob({ status: 'completed' })} {...defaultProps} />)
 
     await openMenu(user)
 
     expect(screen.getByRole('button', { name: 'Download (text)' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Download (docx)' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
   })
 
-  it('should not display download options in menu for non-completed jobs', async () => {
+  it('does not show Download (text) in menu for non-completed jobs', async () => {
     const user = userEvent.setup()
     render(<JobCard job={createMockJob({ status: 'pending' })} {...defaultProps} />)
 
     await openMenu(user)
 
     expect(screen.queryByRole('button', { name: 'Download (text)' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Download (docx)' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument()
   })
 
@@ -101,55 +109,38 @@ describe('JobCard', () => {
     expect(onDownload).toHaveBeenCalledWith(job)
   })
 
-  it('should call onDownloadDeluxe when Download (docx) is clicked in menu', async () => {
+  it('should call onDownloadDeluxe when Download (docx) is clicked', async () => {
     const user = userEvent.setup()
     const job = createMockJob({ status: 'completed' })
     const onDownloadDeluxe = vi.fn().mockResolvedValue(undefined)
 
     render(<JobCard job={job} {...defaultProps} onDownloadDeluxe={onDownloadDeluxe} hasPrompt={true} />)
 
-    await openMenu(user)
     await user.click(screen.getByRole('button', { name: 'Download (docx)' }))
 
     expect(onDownloadDeluxe).toHaveBeenCalledWith(job)
   })
 
-  it('disables Download (docx) when hasPrompt is false', async () => {
-    const user = userEvent.setup()
+  it('disables Download (docx) when hasPrompt is false', () => {
     render(<JobCard job={createMockJob({ status: 'completed' })} {...defaultProps} hasPrompt={false} />)
-
-    await openMenu(user)
-
     expect(screen.getByRole('button', { name: 'Download (docx)' })).toBeDisabled()
   })
 
-  it('enables Download (docx) when hasPrompt is true', async () => {
-    const user = userEvent.setup()
+  it('enables Download (docx) when hasPrompt is true', () => {
     render(<JobCard job={createMockJob({ status: 'completed' })} {...defaultProps} hasPrompt={true} />)
-
-    await openMenu(user)
-
     expect(screen.getByRole('button', { name: 'Download (docx)' })).not.toBeDisabled()
   })
 
-  it('shows correct title on Download (docx) when hasPrompt is false', async () => {
-    const user = userEvent.setup()
+  it('shows correct title on Download (docx) when hasPrompt is false', () => {
     render(<JobCard job={createMockJob({ status: 'completed' })} {...defaultProps} hasPrompt={false} />)
-
-    await openMenu(user)
-
     expect(screen.getByRole('button', { name: 'Download (docx)' })).toHaveAttribute(
       'title',
       'Set a processing prompt in settings first',
     )
   })
 
-  it('shows correct title on Download (docx) when hasPrompt is true', async () => {
-    const user = userEvent.setup()
+  it('shows correct title on Download (docx) when hasPrompt is true', () => {
     render(<JobCard job={createMockJob({ status: 'completed' })} {...defaultProps} hasPrompt={true} />)
-
-    await openMenu(user)
-
     expect(screen.getByRole('button', { name: 'Download (docx)' })).toHaveAttribute(
       'title',
       'Process with your AI prompt and download as Word doc',

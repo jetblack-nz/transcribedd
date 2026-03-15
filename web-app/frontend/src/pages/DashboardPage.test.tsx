@@ -376,8 +376,7 @@ describe('DashboardPage', () => {
     })
 
     try {
-      await waitFor(() => screen.getByRole('button', { name: 'Job options' }))
-      await user.click(screen.getByRole('button', { name: 'Job options' }))
+      await waitFor(() => screen.getByRole('button', { name: 'Download (docx)' }))
       await user.click(screen.getByRole('button', { name: 'Download (docx)' }))
 
       await waitFor(() =>
@@ -401,12 +400,11 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />)
 
-    await waitFor(() => screen.getByRole('button', { name: 'Job options' }))
+    await waitFor(() => screen.getByRole('button', { name: 'Download (docx)' }))
 
     const textarea = screen.getByRole('textbox')
     await user.clear(textarea)
 
-    await user.click(screen.getByRole('button', { name: 'Job options' }))
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Download (docx)' })).toBeDisabled()
     )

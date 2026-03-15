@@ -8,6 +8,8 @@ const STATUS_CLASSES: Record<string, string> = {
   failed: 'bg-red-100 text-red-800',
 }
 
+type BtnState = 'idle' | 'loading' | 'done'
+
 interface JobCardProps {
   job: Job
   onDownload: (job: Job) => Promise<void>
@@ -19,6 +21,7 @@ interface JobCardProps {
 export function JobCard({ job, onDownload, onDownloadDeluxe, onDelete, hasPrompt }: JobCardProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [docxState, setDocxState] = useState<BtnState>('idle')
   const menuRef = useRef<HTMLDivElement>(null)
 
   const date = new Date(job.created_at).toLocaleDateString(undefined, {
@@ -46,6 +49,18 @@ export function JobCard({ job, onDownload, onDownloadDeluxe, onDelete, hasPrompt
     }
   }
 
+  const handleDocx = async () => {
+    if (docxState !== 'idle') return
+    setDocxState('loading')
+    try {
+      await onDownloadDeluxe(job)
+      setDocxState('done')
+      setTimeout(() => setDocxState('idle'), 2000)
+    } catch {
+      setDocxState('idle')
+    }
+  }
+
   return (
     <div className={`bg-white rounded-lg border border-gray-200 px-4 py-3 hover:border-gray-300 transition-colors ${deleting ? 'opacity-50 pointer-events-none' : ''}`}>
       <div className="flex items-center gap-3">
@@ -56,6 +71,20 @@ export function JobCard({ job, onDownload, onDownloadDeluxe, onDelete, hasPrompt
         <span className={`text-xs px-2 py-0.5 rounded-full font-medium shrink-0 ${STATUS_CLASSES[job.status]}`}>
           {job.status}
         </span>
+        {job.status === 'completed' && (
+          <button
+            onClick={handleDocx}
+            disabled={!hasPrompt || docxState === 'loading'}
+            title={hasPrompt ? 'Process with your AI prompt and download as Word doc' : 'Set a processing prompt in settings first'}
+            aria-label="Download (docx)"
+            className="text-xs bg-gray-900 text-white px-3 py-1 rounded-md hover:bg-gray-700 transition-colors disabled:opacity-40 shrink-0 flex items-center gap-1.5"
+          >
+            {docxState === 'loading' && (
+              <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            )}
+            {docxState === 'done' ? '✓' : 'Download (docx)'}
+          </button>
+        )}
         <div className="relative shrink-0" ref={menuRef}>
           <button
             onClick={() => setMenuOpen((o) => !o)}
@@ -74,14 +103,6 @@ export function JobCard({ job, onDownload, onDownloadDeluxe, onDelete, hasPrompt
                     className="w-full text-left text-sm px-4 py-2 hover:bg-gray-50 text-gray-700"
                   >
                     Download (text)
-                  </button>
-                  <button
-                    onClick={() => { setMenuOpen(false); void onDownloadDeluxe(job) }}
-                    disabled={!hasPrompt}
-                    title={hasPrompt ? 'Process with your AI prompt and download as Word doc' : 'Set a processing prompt in settings first'}
-                    className="w-full text-left text-sm px-4 py-2 hover:bg-gray-50 text-gray-700 disabled:opacity-40"
-                  >
-                    Download (docx)
                   </button>
                   <hr className="my-1 border-gray-100" />
                 </>
