@@ -247,6 +247,100 @@ describe('useJobs', () => {
     }))
   })
 
+  describe('createJob URL validation', () => {
+    // Rejection tests throw before insert — only need the initial fetch mock
+    function setupFetchOnly() {
+      mockSupabaseFrom.mockReturnValueOnce({
+        select: vi.fn(() => ({ order: vi.fn(() => Promise.resolve({ data: [], error: null })) })),
+      })
+    }
+
+    // Success test needs fetch + insert mocks
+    function setupForCreate() {
+      mockSupabaseFrom
+        .mockReturnValueOnce({
+          select: vi.fn(() => ({ order: vi.fn(() => Promise.resolve({ data: [], error: null })) })),
+        })
+        .mockReturnValueOnce({
+          insert: vi.fn(() => ({
+            select: vi.fn(() => ({
+              single: vi.fn(() => Promise.resolve({ data: createMockJob(), error: null })),
+            })),
+          })),
+        })
+    }
+
+    it('rejects http:// URLs', async () => {
+      setupFetchOnly()
+      const { result } = renderHook(() => useJobs('user-123'))
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      await expect(result.current.createJob({
+        podcast_title: 'P', episode_title: 'E',
+        episode_url: 'http://cdn.example.com/ep.mp3',
+      })).rejects.toThrow('must be a public HTTPS address')
+    })
+
+    it('rejects localhost URLs', async () => {
+      setupFetchOnly()
+      const { result } = renderHook(() => useJobs('user-123'))
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      await expect(result.current.createJob({
+        podcast_title: 'P', episode_title: 'E',
+        episode_url: 'https://localhost/internal',
+      })).rejects.toThrow('must be a public HTTPS address')
+    })
+
+    it('rejects 10.x private range URLs', async () => {
+      setupFetchOnly()
+      const { result } = renderHook(() => useJobs('user-123'))
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      await expect(result.current.createJob({
+        podcast_title: 'P', episode_title: 'E',
+        episode_url: 'https://10.0.0.1/secret',
+      })).rejects.toThrow('must be a public HTTPS address')
+    })
+
+    it('rejects 192.168.x private range URLs', async () => {
+      setupFetchOnly()
+      const { result } = renderHook(() => useJobs('user-123'))
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      await expect(result.current.createJob({
+        podcast_title: 'P', episode_title: 'E',
+        episode_url: 'https://192.168.1.1/secret',
+      })).rejects.toThrow('must be a public HTTPS address')
+    })
+
+    it('rejects 127.x loopback URLs', async () => {
+      setupFetchOnly()
+      const { result } = renderHook(() => useJobs('user-123'))
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      await expect(result.current.createJob({
+        podcast_title: 'P', episode_title: 'E',
+        episode_url: 'https://127.0.0.1/secret',
+      })).rejects.toThrow('must be a public HTTPS address')
+    })
+
+    it('rejects malformed URLs', async () => {
+      setupFetchOnly()
+      const { result } = renderHook(() => useJobs('user-123'))
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      await expect(result.current.createJob({
+        podcast_title: 'P', episode_title: 'E',
+        episode_url: 'not-a-url',
+      })).rejects.toThrow('must be a public HTTPS address')
+    })
+
+    it('accepts valid public https:// URLs', async () => {
+      setupForCreate()
+      const { result } = renderHook(() => useJobs('user-123'))
+      await waitFor(() => expect(result.current.loading).toBe(false))
+      await expect(result.current.createJob({
+        podcast_title: 'P', episode_title: 'E',
+        episode_url: 'https://cdn.example.com/episode.mp3',
+      })).resolves.toBeDefined()
+    })
+  })
+
   it('should unsubscribe on unmount', async () => {
     mockSupabaseFrom.mockReturnValue({
       select: vi.fn(() => ({

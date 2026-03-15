@@ -43,6 +43,14 @@ export function useJobs(userId: string | undefined) {
     episode_url: string
     audio_file_url?: string
   }) => {
+    const parsed = (() => { try { return new URL(job.episode_url ?? '') } catch { return null } })()
+    if (
+      !parsed ||
+      parsed.protocol !== 'https:' ||
+      /^(localhost|127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.)/.test(parsed.hostname)
+    ) {
+      throw new Error('Invalid episode URL — must be a public HTTPS address')
+    }
     const { data, error } = await supabase.from('jobs').insert({ ...job, user_id: userId }).select().single()
     if (error) throw error
     return data as Job

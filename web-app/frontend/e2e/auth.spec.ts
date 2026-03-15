@@ -31,7 +31,7 @@ test.describe('Authentication Flow', () => {
 
     // Should redirect to dashboard
     await expect(page).toHaveURL('/', { timeout: 10000 })
-    await expect(page.getByText('Jobs')).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Jobs' })).toBeVisible()
   })
 })
 

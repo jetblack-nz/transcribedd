@@ -9,7 +9,7 @@ try {
     const match = line.match(/^([^#=\s][^=]*)=(.*)$/)
     if (match) {
       const key = match[1].trim()
-      const val = match[2].trim().replace(/^["']|["']$/g, '') // strip optional quotes
+      const val = match[2].trim().replace(/^["']|["']$/g, '').replace(/\\(.)/g, '$1') // strip quotes + backslash escapes
       if (!process.env[key]) process.env[key] = val
     }
   }
@@ -22,6 +22,7 @@ try {
  */
 export default defineConfig({
   testDir: './e2e',
+  globalSetup: './e2e/global.setup.ts',
   /* Run tests in files in parallel */
   fullyParallel: true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */
