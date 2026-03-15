@@ -6,8 +6,7 @@ import { DashboardPage } from './DashboardPage'
 import { createMockJobs, createMockJob } from '../test/mocks/data'
 
 // Use vi.hoisted() to declare mocks that will be available in the factory
-const { mockGetSession, mockAuthStateChange, mockFrom, mockChannel, mockInvoke } = vi.hoisted(() => ({
-  mockGetSession: vi.fn(),
+const { mockAuthStateChange, mockFrom, mockChannel, mockInvoke } = vi.hoisted(() => ({
   mockAuthStateChange: vi.fn(),
   mockFrom: vi.fn(),
   mockChannel: vi.fn(),
@@ -25,7 +24,6 @@ vi.mock('docx', () => ({
 vi.mock('../lib/supabase', () => ({
   supabase: {
     auth: {
-      getSession: mockGetSession,
       onAuthStateChange: mockAuthStateChange,
     },
     from: mockFrom,
@@ -88,20 +86,12 @@ function makeFromMock(jobsData: unknown[], jobsError: unknown = null) {
   }
 }
 
-// Mock fetch for transcript download
-const originalFetch = global.fetch
-const originalCreateObjectURL = URL.createObjectURL
-const originalRevokeObjectURL = URL.revokeObjectURL
-
 beforeEach(() => {
   global.fetch = vi.fn() as any
   URL.createObjectURL = vi.fn(() => 'blob:mock-url')
   URL.revokeObjectURL = vi.fn()
 })
-  global.fetch = vi.fn() as any
-    URL.createObjectURL = vi.fn(() => 'blob:mock-url')
-    URL.revokeObjectURL = vi.fn()
-  
+
 describe('DashboardPage', () => {
   beforeEach(() => {
     resetAllMocks()
@@ -185,23 +175,9 @@ describe('DashboardPage', () => {
       }),
     ]
     mockFrom.mockImplementation(makeFromMock(jobs))
-    mockGetSession.mockResolvedValue({
-      data: {
-        session: {
-          access_token: 'mock-token',
-          user: { id: 'user-123', email: 'test@example.com' },
-        },
-      },
-      error: null,
-    })
+    mockInvoke.mockResolvedValueOnce({ data: { url: 'https://example.com/transcript.txt' }, error: null })
 
-    // Mock the transcript URL endpoint
-    ;(global.fetch as any).mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({ url: 'https://example.com/transcript.txt' }),
-    })
-
-    // Mock the file download
+    // Mock the signed-URL file download
     ;(global.fetch as any).mockResolvedValueOnce({
       text: () => Promise.resolve('transcript content'),
     })
@@ -225,15 +201,7 @@ describe('DashboardPage', () => {
       await user.click(screen.getByRole('button', { name: 'Download (text)' }))
 
       await waitFor(() => {
-        expect(global.fetch).toHaveBeenCalledWith(
-          expect.stringContaining('/functions/v1/get-transcript-url'),
-          expect.objectContaining({
-            method: 'POST',
-            headers: expect.objectContaining({
-              Authorization: 'Bearer mock-token',
-            }),
-          })
-        )
+        expect(mockInvoke).toHaveBeenCalledWith('get-transcript-url', expect.objectContaining({ body: { jobId: 'job-1' } }))
       })
     } finally {
       document.createElement = originalCreateElement
@@ -352,17 +320,10 @@ describe('DashboardPage', () => {
 
   // --- Docx download ---
 
-  it('calls process-transcript with auth token when Download (docx) is clicked', async () => {
+  it('calls process-transcript when Download (docx) is clicked', async () => {
     const jobs = [createMockJob({ id: 'job-1', status: 'completed', transcript_path: 'path/to/file.txt', episode_title: 'Test Episode' })]
     mockFrom.mockImplementation(makeFromMock(jobs))
-    mockGetSession.mockResolvedValue({
-      data: { session: { access_token: 'mock-token', user: { id: 'user-123', email: 'test@example.com' } } },
-      error: null,
-    })
-    ;(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ text: 'transcript content' }),
-    })
+    mockInvoke.mockResolvedValueOnce({ data: { text: 'transcript content' }, error: null })
 
     const user = userEvent.setup()
     render(<DashboardPage />)
@@ -380,13 +341,7 @@ describe('DashboardPage', () => {
       await user.click(screen.getByRole('button', { name: 'Download (docx)' }))
 
       await waitFor(() =>
-        expect(global.fetch).toHaveBeenCalledWith(
-          expect.stringContaining('/functions/v1/process-transcript'),
-          expect.objectContaining({
-            method: 'POST',
-            headers: expect.objectContaining({ Authorization: 'Bearer mock-token' }),
-          }),
-        )
+        expect(mockInvoke).toHaveBeenCalledWith('process-transcript', expect.objectContaining({ body: { jobId: 'job-1' } }))
       )
     } finally {
       document.createElement = originalCreateElement
@@ -412,11 +367,11 @@ describe('DashboardPage', () => {
 
   // --- Text download edge cases ---
 
-  it('shows alert when getSession returns no session', async () => {
+  it('shows alert when get-transcript-url invoke returns an error', async () => {
     const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
     const jobs = [createMockJob({ id: 'job-1', status: 'completed', transcript_path: 'path/to/file.txt', episode_title: 'Test Episode' })]
     mockFrom.mockImplementation(makeFromMock(jobs))
-    mockGetSession.mockResolvedValue({ data: { session: null }, error: null })
+    mockInvoke.mockResolvedValueOnce({ data: null, error: new Error('Unauthorized') })
 
     const user = userEvent.setup()
     render(<DashboardPage />)
@@ -425,22 +380,15 @@ describe('DashboardPage', () => {
     await user.click(screen.getByRole('button', { name: 'Job options' }))
     await user.click(screen.getByRole('button', { name: 'Download (text)' }))
 
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining('Not authenticated')))
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining('Unauthorized')))
     alertSpy.mockRestore()
   })
 
-  it('shows alert when get-transcript-url returns a non-ok response', async () => {
+  it('shows alert when get-transcript-url returns no URL', async () => {
     const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
     const jobs = [createMockJob({ id: 'job-1', status: 'completed', transcript_path: 'path/to/file.txt', episode_title: 'Test' })]
     mockFrom.mockImplementation(makeFromMock(jobs))
-    mockGetSession.mockResolvedValue({
-      data: { session: { access_token: 'mock-token', user: { id: 'user-123' } } },
-      error: null,
-    })
-    ;(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ok: false,
-      json: () => Promise.resolve({ error: 'Server error' }),
-    })
+    mockInvoke.mockResolvedValueOnce({ data: {}, error: null })
 
     const user = userEvent.setup()
     render(<DashboardPage />)
@@ -449,7 +397,7 @@ describe('DashboardPage', () => {
     await user.click(screen.getByRole('button', { name: 'Job options' }))
     await user.click(screen.getByRole('button', { name: 'Download (text)' }))
 
-    await waitFor(() => expect(alertSpy).toHaveBeenCalled())
+    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining('No URL returned')))
     alertSpy.mockRestore()
   })
 

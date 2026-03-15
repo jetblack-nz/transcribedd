@@ -104,29 +104,14 @@ export function DashboardPage() {
   const handleDownload = async (job: Job) => {
     if (!job.transcript_path) return
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) throw new Error('Not authenticated')
-
-      const resp = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/get-transcript-url`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ jobId: job.id }),
-        },
-      )
-      const body = await resp.json()
-      if (!resp.ok) throw new Error(body.error ?? `HTTP ${resp.status}`)
-      if (body.url) {
-        const fileResp = await fetch(body.url)
-        const text = await fileResp.text()
-        triggerDownload(text, `${job.episode_title ?? job.id}.txt`)
-      } else {
-        throw new Error('No URL returned from server')
-      }
+      const { data, error } = await supabase.functions.invoke('get-transcript-url', {
+        body: { jobId: job.id },
+      })
+      if (error) throw error
+      if (!data?.url) throw new Error('No URL returned from server')
+      const fileResp = await fetch(data.url)
+      const text = await fileResp.text()
+      triggerDownload(text, `${job.episode_title ?? job.id}.txt`)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       alert(`Download failed: ${msg}`)
@@ -140,23 +125,11 @@ export function DashboardPage() {
       return
     }
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) throw new Error('Not authenticated')
-
-      const resp = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/process-transcript`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ jobId: job.id }),
-        },
-      )
-      const body = await resp.json()
-      if (!resp.ok) throw new Error(body.error ?? `HTTP ${resp.status}`)
-      const docxBlob = await buildDocx(body.text)
+      const { data, error } = await supabase.functions.invoke('process-transcript', {
+        body: { jobId: job.id },
+      })
+      if (error) throw error
+      const docxBlob = await buildDocx(data.text)
       const url = URL.createObjectURL(docxBlob)
       const a = document.createElement('a')
       a.href = url
