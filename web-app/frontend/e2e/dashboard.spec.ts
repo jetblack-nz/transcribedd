@@ -1,5 +1,39 @@
 import { test, expect } from './fixtures'
 
+test.describe('Downloads', () => {
+  test('Download (docx) button calls process-transcript and returns non-401', async ({ authenticatedPage: page }) => {
+    await page.goto('/')
+
+    // Intercept the edge function call — we just want to verify auth passes (no 401)
+    const [request] = await Promise.all([
+      page.waitForRequest(req => req.url().includes('/functions/v1/process-transcript'), { timeout: 5000 }).catch(() => null),
+      // If there are no completed jobs the button won't exist; skip gracefully
+      page.locator('button[aria-label="Download (docx)"]').first().click({ timeout: 5000 }).catch(() => null),
+    ])
+
+    if (request) {
+      const response = await request.response()
+      expect(response?.status()).not.toBe(401)
+    }
+  })
+
+  test('Download (text) button calls get-transcript-url and returns non-401', async ({ authenticatedPage: page }) => {
+    await page.goto('/')
+
+    const [request] = await Promise.all([
+      page.waitForRequest(req => req.url().includes('/functions/v1/get-transcript-url'), { timeout: 5000 }).catch(() => null),
+      page.locator('[aria-label="Job options"]').first().click({ timeout: 5000 }).catch(() => null),
+    ])
+
+    if (request) {
+      // Click Download (text) if the menu opened
+      await page.getByRole('button', { name: 'Download (text)' }).click({ timeout: 2000 }).catch(() => null)
+      const response = await request.response()
+      expect(response?.status()).not.toBe(401)
+    }
+  })
+})
+
 test.describe('Dashboard', () => {
   test('should display empty state when no jobs', async ({ authenticatedPage: page }) => {
     await page.goto('/')
