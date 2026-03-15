@@ -94,9 +94,5 @@ BEGIN
 END;
 $$;
 
--- Schedule: every minute
-SELECT cron.schedule(
-  'runpod-trigger-stale-jobs',
-  '* * * * *',
-  'SELECT trigger_runpod_for_stale_jobs();'
-);
+-- pg_cron schedule is created in 20260315000002_pg_cron_schedule.sql
+-- (requires pg_cron and pg_net extensions to be enabled first)

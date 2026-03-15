@@ -66,8 +66,8 @@ _Last updated: 2026-03-15 (session 6)_
 - ✅ Worker token columns removed (`20260314000001`): `worker_token_hash` and related columns dropped from `profiles` — **applied**
 - ✅ `create-worker-token` Edge Function deleted
 - ✅ SSRF protection (`20260315000000`): `episode_url HTTPS CHECK` constraint + frontend validation rejecting private/loopback ranges
-- ✅ `claim_stale_job` RPC (`20260315000001`): claims pending jobs older than N seconds; used by RunPod trigger
-- ✅ pg_cron schedule (`20260315000001`): fires every 60s, calls `trigger-worker` only when stale jobs exist
+- ✅ `claim_stale_job` RPC + `trigger_runpod_for_stale_jobs` function (`20260315000001`) — **applied to live DB**
+- ✅ pg_cron + pg_net extensions + cron schedule (`20260315000002`) — **applied to live DB**
 
 ### Project Infrastructure
 - ✅ `CLAUDE.md` merged to main (AI assistant conventions, build commands, security rules)
@@ -116,6 +116,6 @@ See `docs/plan/SECURITY_FIXES.md` for full details. Outstanding items:
 - Usage statistics / admin dashboard
 - Speaker diarization
 - macOS app code signing and notarization for distribution
-- RunPod Serverless endpoint setup + secrets configured (user action: create endpoint, `supabase secrets set`, set DB params)
-- RunPod migration `20260315000001` applied to live DB (`supabase db push`)
+- **RunPod Serverless endpoint setup** — create endpoint in RunPod console, set `RUNPOD_ENDPOINT_ID` secret
+- **pg_cron DB params** — run in Supabase SQL editor: `ALTER DATABASE postgres SET app.settings.supabase_url = '...'; ALTER DATABASE postgres SET app.settings.service_role_key = '...';`
 - macOS worker rebuild + restart after RPC signature change
