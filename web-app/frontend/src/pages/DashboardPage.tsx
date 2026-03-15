@@ -128,7 +128,11 @@ export function DashboardPage() {
       const { data, error } = await supabase.functions.invoke('process-transcript', {
         body: { jobId: job.id },
       })
-      if (error) throw error
+      if (error) {
+        // Extract the real error message from the edge function response body
+        const body = await (error as any).context?.json?.().catch(() => null)
+        throw new Error(body?.error ?? error.message)
+      }
       const docxBlob = await buildDocx(data.text)
       const url = URL.createObjectURL(docxBlob)
       const a = document.createElement('a')
