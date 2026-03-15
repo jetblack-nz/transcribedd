@@ -121,31 +121,35 @@ final class SupabaseService {
         return jobs.first
     }
 
-    func completeJob(id: UUID, transcriptPath: String) async throws {
+    func completeJob(id: UUID, transcriptPath: String, workerId: String) async throws {
         guard let client else { throw WorkerError.notConfigured }
         struct Params: Encodable {
             let p_job_id: String
             let p_transcript_path: String
+            let p_worker_id: String
         }
         let _: [Job] = try await client
             .rpc("complete_job", params: Params(
                 p_job_id: id.uuidString.lowercased(),
-                p_transcript_path: transcriptPath
+                p_transcript_path: transcriptPath,
+                p_worker_id: workerId
             ))
             .execute()
             .value
     }
 
-    func failJob(id: UUID, error: String) async throws {
+    func failJob(id: UUID, error: String, workerId: String) async throws {
         guard let client else { throw WorkerError.notConfigured }
         struct Params: Encodable {
             let p_job_id: String
             let p_error_message: String
+            let p_worker_id: String
         }
         let _: [Job] = try await client
             .rpc("fail_job", params: Params(
                 p_job_id: id.uuidString.lowercased(),
-                p_error_message: error
+                p_error_message: error,
+                p_worker_id: workerId
             ))
             .execute()
             .value

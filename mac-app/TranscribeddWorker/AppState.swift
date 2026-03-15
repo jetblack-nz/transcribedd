@@ -207,7 +207,7 @@ final class AppState: ObservableObject {
             )
             log("Job \(job.id): uploaded → \(path)")
 
-            try await SupabaseService.shared.completeJob(id: job.id, transcriptPath: path)
+            try await SupabaseService.shared.completeJob(id: job.id, transcriptPath: path, workerId: workerId)
             log("Job \(job.id): completed ✓")
 
             appendToRecent(job, status: .completed, transcriptPath: path, error: nil)
@@ -220,7 +220,7 @@ final class AppState: ObservableObject {
         } catch {
             if let job = currentJob {
                 log("Job \(job.id): failed — \(error.localizedDescription)")
-                try? await SupabaseService.shared.failJob(id: job.id, error: error.localizedDescription)
+                try? await SupabaseService.shared.failJob(id: job.id, error: error.localizedDescription, workerId: workerId)
                 appendToRecent(job, status: .failed, transcriptPath: nil, error: error.localizedDescription)
                 NotificationService.jobFailed(job, error: error.localizedDescription)
             } else {
