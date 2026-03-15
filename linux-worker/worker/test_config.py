@@ -78,3 +78,28 @@ def test_load_overrides_timeouts(monkeypatch):
     cfg = load()
     assert cfg.timeout_download == 60
     assert cfg.timeout_transcribe == 3600
+
+
+def test_load_runpod_vars_default_to_none(monkeypatch):
+    _set_required(monkeypatch)
+    cfg = load()
+    assert cfg.runpod_api_key is None
+    assert cfg.runpod_pod_id is None
+
+
+def test_load_runpod_vars_when_set(monkeypatch):
+    _set_required(monkeypatch)
+    monkeypatch.setenv("RUNPOD_API_KEY", "rp_abc123")
+    monkeypatch.setenv("RUNPOD_POD_ID", "pod-xyz")
+    cfg = load()
+    assert cfg.runpod_api_key == "rp_abc123"
+    assert cfg.runpod_pod_id == "pod-xyz"
+
+
+def test_load_runpod_empty_string_becomes_none(monkeypatch):
+    _set_required(monkeypatch)
+    monkeypatch.setenv("RUNPOD_API_KEY", "")
+    monkeypatch.setenv("RUNPOD_POD_ID", "")
+    cfg = load()
+    assert cfg.runpod_api_key is None
+    assert cfg.runpod_pod_id is None

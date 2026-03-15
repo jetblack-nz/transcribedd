@@ -21,6 +21,10 @@ class Config:
     poll_interval: int
     log_level: str
 
+    # RunPod — optional; when set the worker stops the pod after queue drains
+    runpod_api_key: str | None
+    runpod_pod_id: str | None
+
 
 def load() -> Config:
     def require(name: str) -> str:
@@ -49,4 +53,7 @@ def load() -> Config:
 
         poll_interval=int(optional("POLL_INTERVAL_SECONDS", "30")),
         log_level=optional("LOG_LEVEL", "info"),
+
+        runpod_api_key=os.environ.get("RUNPOD_API_KEY") or None,
+        runpod_pod_id=os.environ.get("RUNPOD_POD_ID") or None,
     )

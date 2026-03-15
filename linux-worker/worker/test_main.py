@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from worker.config import Config
-from worker.main import process_job
+from worker.main import process_job, main
 
 
 def _make_config(**overrides) -> Config:
@@ -29,6 +29,8 @@ def _make_config(**overrides) -> Config:
         timeout_upload=120,
         poll_interval=30,
         log_level="info",
+        runpod_api_key=None,
+        runpod_pod_id=None,
     )
     return Config(**{**defaults, **overrides})
 
@@ -244,3 +246,93 @@ async def test_process_job_cleans_up_temp_files_on_failure(mocker, tmp_path):
     await process_job(MagicMock(), transcriber, _make_job(), _make_config())
 
     assert not audio.exists()
+
+
+# ---------------------------------------------------------------------------
+# RunPod self-termination
+# ---------------------------------------------------------------------------
+
+def _make_runpod_config(**overrides):
+    return _make_config(
+        runpod_api_key="rp_test_key",
+        runpod_pod_id="pod-abc123",
+        poll_interval=0,
+        **overrides,
+    )
+
+
+def _mock_transcriber(mocker):
+    mock_cls = mocker.patch("worker.main.Transcriber")
+    instance = MagicMock()
+    instance.load = AsyncMock()
+    mock_cls.return_value = instance
+    return instance
+
+
+async def test_main_stops_pod_when_queue_empty_and_runpod_configured(mocker):
+    mocker.patch("worker.main.config_module.load", return_value=_make_runpod_config())
+    _mock_transcriber(mocker)
+    mocker.patch("worker.main.init_client", new_callable=AsyncMock, return_value=MagicMock())
+    mocker.patch("worker.main.reset_own_stuck_jobs", new_callable=AsyncMock, return_value=0)
+    mocker.patch("worker.main.run_realtime", new_callable=AsyncMock)
+    mocker.patch("worker.main.claim_next_job", new_callable=AsyncMock, return_value=None)
+    mock_stop = mocker.patch("worker.main.stop_pod", new_callable=AsyncMock)
+
+    await main()
+
+    mock_stop.assert_awaited_once_with("rp_test_key", "pod-abc123")
+
+
+async def test_main_does_not_stop_pod_when_runpod_not_configured(mocker):
+    mocker.patch("worker.main.config_module.load", return_value=_make_config(poll_interval=0))
+    _mock_transcriber(mocker)
+    mocker.patch("worker.main.init_client", new_callable=AsyncMock, return_value=MagicMock())
+    mocker.patch("worker.main.reset_own_stuck_jobs", new_callable=AsyncMock, return_value=0)
+    mocker.patch("worker.main.run_realtime", new_callable=AsyncMock)
+
+    # Queue empty then shutdown signal after second poll
+    call_count = 0
+    async def _claim(*_):
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 2:
+            raise asyncio.CancelledError
+        return None
+    mocker.patch("worker.main.claim_next_job", side_effect=_claim)
+    mock_stop = mocker.patch("worker.main.stop_pod", new_callable=AsyncMock)
+
+    with pytest.raises(asyncio.CancelledError):
+        await main()
+
+    mock_stop.assert_not_awaited()
+
+
+async def test_main_processes_job_before_stopping_pod(mocker, tmp_path):
+    audio = _audio_file(tmp_path)
+    transcriber_instance = _make_transcriber()
+    transcriber_instance.load = AsyncMock()
+
+    mock_transcriber_cls = mocker.patch("worker.main.Transcriber")
+    mock_transcriber_cls.return_value = transcriber_instance
+
+    mocker.patch("worker.main.config_module.load", return_value=_make_runpod_config())
+    mocker.patch("worker.main.init_client", new_callable=AsyncMock, return_value=MagicMock())
+    mocker.patch("worker.main.reset_own_stuck_jobs", new_callable=AsyncMock, return_value=0)
+    mocker.patch("worker.main.run_realtime", new_callable=AsyncMock)
+    mocker.patch("worker.main.download_audio", new_callable=AsyncMock, return_value=audio)
+    mocker.patch("worker.main.upload_transcript", new_callable=AsyncMock, return_value="u/j.txt")
+    mock_complete = mocker.patch("worker.main.complete_job", new_callable=AsyncMock)
+    mocker.patch("worker.main.fail_job", new_callable=AsyncMock)
+    mock_stop = mocker.patch("worker.main.stop_pod", new_callable=AsyncMock)
+
+    # First claim returns a job, second returns None (queue drained)
+    mocker.patch(
+        "worker.main.claim_next_job",
+        new_callable=AsyncMock,
+        side_effect=[_make_job(), None],
+    )
+
+    await main()
+
+    mock_complete.assert_awaited_once()
+    mock_stop.assert_awaited_once_with("rp_test_key", "pod-abc123")

@@ -12,6 +12,7 @@ import structlog.stdlib
 from . import config as config_module
 from .config import Config
 from .downloader import download_audio, sanitise_url
+from .runpod_ops import stop_pod
 from .supabase_ops import (
     claim_next_job,
     complete_job,
@@ -190,7 +191,11 @@ async def main() -> None:
                 await asyncio.wait_for(job_available.wait(), timeout=cfg.poll_interval)
                 log.info("job.woken_by_realtime")
             except asyncio.TimeoutError:
-                pass
+                # Queue still empty after full poll interval — stop pod if on RunPod
+                if cfg.runpod_api_key and cfg.runpod_pod_id:
+                    log.info("runpod.stopping", reason="queue empty")
+                    await stop_pod(cfg.runpod_api_key, cfg.runpod_pod_id)
+                    break
             finally:
                 job_available.clear()
             continue

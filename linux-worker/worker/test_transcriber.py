@@ -24,6 +24,8 @@ def _make_config(**overrides) -> Config:
         timeout_upload=120,
         poll_interval=30,
         log_level="info",
+        runpod_api_key=None,
+        runpod_pod_id=None,
     )
     return Config(**{**defaults, **overrides})
 

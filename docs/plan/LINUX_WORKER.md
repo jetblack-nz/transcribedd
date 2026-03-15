@@ -2,9 +2,15 @@
 
 ## Overview
 
-A headless Python daemon that runs on a Debian server with an NVIDIA GPU and replaces the macOS worker app. It performs the same job: claim transcription jobs from Supabase, download audio, transcribe with Whisper, and upload results. It is a **drop-in replacement** — no Supabase schema changes, no new RPC functions, no new storage buckets.
+A headless Python daemon that runs in a Docker container with NVIDIA GPU access. It claims transcription jobs from Supabase, downloads audio, transcribes with Whisper (`large-v3`), and uploads results. It is a **drop-in replacement for the macOS worker** — no Supabase schema changes, no new RPC functions, no new storage buckets.
 
-The server worker is always-on, uses a GPU-accelerated Whisper model (`large-v3` by default), and achieves ~10–20× realtime transcription speed vs the mac app's CPU-based `small` model.
+### Deployment Target: RunPod (on-demand pod)
+
+The worker runs on a **RunPod on-demand GPU pod** (RTX 3090, 24 GB VRAM, ~$0.22/hr Community Cloud). The pod is **stopped when idle** and started automatically when a new job arrives — paying only for actual GPU compute time.
+
+**Why RunPod, not a dedicated server**: An initial attempt to run on a shared Debian server (node3.gyr.lan, NVIDIA T600, 4 GB VRAM) failed — Immich ML and Scrypted consumed ~3.8 GB of the 4 GB VRAM, leaving insufficient headroom for `large-v3` inference. CPU fallback caused thermal issues. RunPod provides a dedicated 24 GB GPU with no competing workloads.
+
+**Cost at 10 jobs/day, 15 min avg**: ~$0.55/day ($16/month). Zero idle cost.
 
 ---
 
@@ -15,9 +21,9 @@ The server worker is always-on, uses a GPU-accelerated Whisper model (`large-v3`
 | Language | Swift | Python 3.11+ |
 | Transcription | `whisper-cli` subprocess (CPU, `small` model) | `faster-whisper` library (CUDA, `large-v3`) |
 | Auth | GitHub OAuth (interactive JWT) | `SUPABASE_SERVICE_ROLE_KEY` (env var) |
-| Process management | macOS launchd / user session | Docker container (deployment managed externally) |
+| Process management | macOS launchd / user session | RunPod on-demand pod (start/stop via API) |
 | UI / notifications | SwiftUI menu bar | None (structured log output only) |
-| Availability | Only when Mac is on | Always-on |
+| Availability | Only when Mac is on | On-demand: starts on job arrival, stops when queue drains |
 
 Everything else — job claiming RPC, storage upload path convention, Realtime subscription pattern, 30s poll fallback — is **identical**.
 
@@ -27,12 +33,14 @@ Everything else — job claiming RPC, storage upload path convention, Realtime s
 
 | Concern | Choice | Reason |
 |---|---|---|
-| Transcription | `faster-whisper` (CTranslate2) | 4–8× faster than original Whisper on GPU; INT8/FP16 quantization; clean Python progress API; same GGML model family |
+| Transcription | `faster-whisper` (CTranslate2) | 4–8× faster than original Whisper on GPU; INT8/FP16 quantization; clean Python progress API |
 | Supabase client | `supabase-py` | Direct Python equivalent of `supabase-swift`; Realtime, Storage, RPC all supported |
-| Audio download | `httpx` | Async HTTP client; supports browser User-Agent spoofing to avoid CDN blocks (same workaround as mac app) |
+| Audio download | `httpx` | Async HTTP client; supports browser User-Agent spoofing to avoid CDN blocks |
 | Audio conversion | `ffmpeg` (system apt package) | Same tool and same command as mac app: `-ar 16000 -ac 1 -c:a pcm_s16le` |
 | Structured logging | `structlog` | JSON log output suitable for log aggregation pipelines |
-| Container runtime | Docker + NVIDIA Container Toolkit | CUDA dependencies are complex on bare Debian; Docker base images handle them cleanly and reproducibly |
+| Container runtime | Docker + NVIDIA Container Toolkit | CUDA dependencies handled by `nvidia/cuda` base image |
+| Pod lifecycle | RunPod REST API (`/v1/pods/{id}/stop`) | Worker stops itself via API after queue drains |
+| Pod wakeup | Supabase `trigger-worker` Edge Function | Called by Database Webhook on job INSERT; calls RunPod `/start` |
 
 ---
 
@@ -127,12 +135,53 @@ on any other error:
 
 ### Stuck job recovery
 
-Jobs left in `processing` (e.g. worker crash before `fail_job`) are not automatically retried. The existing migration `20260312000001_reset_stuck_processing_jobs.sql` is a manual one-shot reset. A periodic recovery mechanism should be added — either:
+On startup the worker resets any `processing` jobs claimed by its own `worker_id` back to `pending` (handles crash-before-fail_job scenario).
 
-- A scheduled Supabase Edge Function that resets jobs stuck in `processing` for > N minutes back to `pending` (recommended), or
-- The worker itself on startup: reset any `processing` jobs claimed by its own `worker_id` back to `pending`
+---
 
-The worker will implement the startup self-recovery (own `worker_id` only). A production deployment should also add the scheduled edge function for jobs orphaned by a dead worker.
+## RunPod Pod Lifecycle
+
+```
+User submits job (web app)
+  └── INSERT into jobs table
+        └── Supabase Database Webhook fires
+              └── trigger-worker Edge Function called
+                    └── POST https://rest.runpod.io/v1/pods/{pod_id}/start
+                          └── Pod resumes (~60s cold start)
+                                └── Worker starts, loads large-v3, claims job
+                                      └── Transcribes, uploads, completes job
+                                            └── claim_next_job() → None (empty queue)
+                                                  └── Wait poll_interval seconds
+                                                        └── Still nothing → stop_pod()
+                                                              └── Pod stops, billing stops
+```
+
+### Webhook configuration (Supabase Dashboard)
+
+1. Database → Webhooks → Create new webhook
+2. Table: `jobs`, Event: `INSERT`
+3. Method: `POST`, URL: `https://<project>.supabase.co/functions/v1/trigger-worker`
+4. HTTP Headers: `Authorization: Bearer <anon_key>`
+
+### Secrets (set via `supabase secrets set`)
+
+```
+RUNPOD_API_KEY=<runpod api key>
+RUNPOD_POD_ID=<id of the stopped pod>
+```
+
+### Pod configuration on RunPod
+
+- GPU: RTX 3090 (24 GB) or RTX A5000 (24 GB) on Community Cloud
+- Docker image: `transcribedd-worker:latest` (built from this repo's `linux-worker/Dockerfile`)
+- Network volume: mount at `/root/.cache/huggingface/` to persist the Whisper model across stops
+- Container start command: `python -m worker.main`
+- Env vars: set from `.env` (fill in `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `WORKER_ID`, `RUNPOD_API_KEY`, `RUNPOD_POD_ID`)
+- `restart: no` — RunPod manages lifecycle; no auto-restart on exit
+
+### Always-on mode (local dev / dedicated server)
+
+Leave `RUNPOD_API_KEY` and `RUNPOD_POD_ID` unset. The worker runs indefinitely, polling every 30 seconds. The trigger-worker edge function is not needed.
 
 ---
 
