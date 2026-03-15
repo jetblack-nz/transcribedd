@@ -1,3 +1,4 @@
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
@@ -65,7 +66,7 @@ async function groqChatWithRetry(
   throw new Error('Groq request failed after retries')
 }
 
-Deno.serve(async (req) => {
+serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
   }
@@ -82,17 +83,21 @@ Deno.serve(async (req) => {
     const supabaseUrl    = Deno.env.get('SUPABASE_URL') ?? ''
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
 
-    const adminClient = createClient(supabaseUrl, serviceRoleKey)
-
-    // Validate JWT via admin client — more reliable than anon-key user client
-    const jwt = authHeader.replace('Bearer ', '')
-    const { data: { user }, error: userError } = await adminClient.auth.getUser(jwt)
+    // Verify JWT via user client (standard Supabase edge function pattern)
+    const userClient = createClient(
+      supabaseUrl,
+      Deno.env.get('SUPABASE_ANON_KEY') ?? '',
+      { global: { headers: { Authorization: authHeader } } },
+    )
+    const { data: { user }, error: userError } = await userClient.auth.getUser()
     if (userError || !user) {
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } },
       )
     }
+
+    const adminClient = createClient(supabaseUrl, serviceRoleKey)
 
     const { jobId } = await req.json()
     if (!jobId || typeof jobId !== 'string') {

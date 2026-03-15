@@ -129,9 +129,16 @@ export function DashboardPage() {
         body: { jobId: job.id },
       })
       if (error) {
-        // Extract the real error message from the edge function response body
-        const body = await (error as any).context?.json?.().catch(() => null)
-        throw new Error(body?.error ?? error.message)
+        console.error('process-transcript error:', error)
+        let detail = error.message
+        try {
+          const body = await (error as any).context?.json()
+          console.error('process-transcript error body:', body)
+          if (body?.error) detail = body.error
+        } catch (e) {
+          console.error('could not parse error body:', e)
+        }
+        throw new Error(detail)
       }
       const docxBlob = await buildDocx(data.text)
       const url = URL.createObjectURL(docxBlob)
