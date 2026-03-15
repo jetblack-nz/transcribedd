@@ -200,3 +200,9 @@ SUPABASE_SERVICE_ROLE_KEY   # only for trusted Edge Functions
 - **Backend**: Supabase managed (free tier), project ref `dsxfwfeuvkccepfangqd`, region: Northeast Asia (Seoul)
 - **macOS worker**: Distributed as a signed `.app` bundle built via `build.sh`
 - **Linux worker**: Docker image — deployment target TBD
+
+> **IMPORTANT — deploy ALL parts of a change, not just the frontend.**
+> Pushing to `main` only deploys the frontend automatically. Edge function and DB changes require manual steps:
+> - Edge functions: `supabase functions deploy <name>` (workaround: `mv .env.local .env.local.bak && supabase functions deploy <name>; mv .env.local.bak .env.local`)
+> - DB migrations: `supabase db push` (same `.env.local` workaround)
+> - If you changed an edge function, always redeploy it — committed ≠ deployed.
